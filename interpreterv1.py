@@ -25,7 +25,7 @@ class Interpreter(InterpreterBase):
         )
             
     def run_func(self, func_node):
-        for statement_node in func_node.statements:
+        for statement_node in func_node.dict['statements']:
             self.run_statement(statement_node)
         
     def run_statement(self, statement_node):
@@ -69,6 +69,38 @@ class Interpreter(InterpreterBase):
                 return op1 + self.handle_expression(op2.op1, op2.op2, op2.elem_type)
             elif operation == '-':
                 return op1 - self.handle_expression(op2.op1, op2.op2, op2.elem_type)
-
-
+        elif op1.elem_type == 'string' or op2.elem_type == 'string':
+            super().error(
+                    ErrorType.NAME_ERROR,
+                    f"Unsupported operation (string)",
+                )
+        elif op1.elem_type == 'int' or op2.elem_type == 'int':
+            if op1.elem_type == 'int':
+                return self.handle_expression((int)(op1.dict['val']), op2, operation)
+            return self.handle_expression(op1, (int)(op2.dict['val'], operation))
+        elif op1.elem_type == 'var' or op2.elem_type == 'var':
+            if op1.dict['name'] not in self.variable_names or op2.dict['name'] not in self.variable_names:
+                    super().error(
+                    ErrorType.NAME_ERROR,
+                    f"variable doesn't exist",
+                )
+            if op1.dict['name'].isdigit() == False or op2.dict['name'].isdigit() == False:
+                super().error(
+                    ErrorType.NAME_ERROR,
+                    f"variable is of type string",
+                )
+            if op1.elem_type == 'var':
+                return self.handle_expression(self.variable_name_to_value[op1.dict['name']], op2, operation)
+            return self.handle_expression(op1, self.variable_name_to_value[op2.dict['name']], operation)
+        elif type(op1) == int and type(op2) == int:
+            if operation == '+':
+                return op1 + op2
+            return op1 - op2
+        else:
+            super().error(
+                    ErrorType.NAME_ERROR,
+                    f"Unsupported expression",
+                )
     def function_call(self, function_node):
+        if function_node.dict['name'] == 'print':
+            handle
