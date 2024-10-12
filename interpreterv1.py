@@ -1,5 +1,6 @@
-from intbase import InterpreterBase
+from intbase import InterpreterBase, ErrorType
 from brewparse import parse_program
+
 
 class Interpreter(InterpreterBase):
     variable_name_to_value = {}
@@ -29,17 +30,45 @@ class Interpreter(InterpreterBase):
         
     def run_statement(self, statement_node):
         if statement_node.elem_type == 'vardef':
-            self.variable_names.append(statement_node.name)
+            if statement_node.dict['name'] in self.variable_names:
+                super().error(
+                    ErrorType.NAME_ERROR,
+                    f"Variable {statement_node.dict['name']} defined more than once",
+                )
+            self.variable_names.append(statement_node.dict['name'])
         elif statement_node.elem_type == '=':
             self.do_assignment(statement_node)
         elif statement_node.elem_type == 'fcall':
-            self.function_call()
+            self.function_call(statement_node)
     
     def do_assignment(self, assignment_node):
-        if assignment_node.expression.elem_type == 'var':
-            if assignment_node.expression.dict['name'] not in self.variable_names:
+        if assignment_node.dict['name'] not in self.variable_names:
                 super().error(
                     ErrorType.NAME_ERROR,
-                    f"Variable {var_name} defined more than once",
+                    f"Variable {assignment_node.dict['expression'].dict['name']} not defined yet",
                     )
-            self.variable_name_to_value[assignment_node.dict['name']] = self.variable_name_to_value[assignment_node.expression.dict['name']]
+        if assignment_node.dict['expression'].elem_type == 'var':
+            self.variable_name_to_value[assignment_node.dict['name']] = self.variable_name_to_value[assignment_node.dict['expression'].dict['name']]
+        elif assignment_node.dict['expression'].elem_type == 'int':
+            self.variable_name_to_value[assignment_node.dict['name']] = (int)(assignment_node.dict['expression'].dict['val'])
+        elif assignment_node.dict['expression'].elem_type == 'string':
+            self.variable_name_to_value[assignment_node.dict['name']] = assignment_node.dict['expression'].dict['val']
+        elif assignment_node.dict['expression'].elem_type == '+':
+            self.variable_name_to_value[assignment_node.dict['name']] = self.handle_expression(assignment_node.dict['expression'].dict['op1'], assignment_node.dict['expression'].dict['op2'], '+')
+        elif assignment_node.dict['expression'].elem_type == '-':
+            self.variable_name_to_value[assignment_node.dict['name']] = self.handle_expression(assignment_node.dict['expression'].dict['op1'], assignment_node.dict['expression'].dict['op2'], '-')
+            
+    def handle_expression(self, op1, op2, operation):
+        if op1.elem_type == '+' or op1.elem_type == '-':
+            if operation == '+':
+                return self.handle_expression(op1.op1, op1.op2, op1.elem_type) + op2
+            elif operation == '-':
+                return self.handle_expression(op1.op1, op1.op2, op1.elem_type) - op2
+        elif op2.elem_type == '+' or op2.elem_type == '-':
+            if operation == '+':
+                return op1 + self.handle_expression(op2.op1, op2.op2, op2.elem_type)
+            elif operation == '-':
+                return op1 - self.handle_expression(op2.op1, op2.op2, op2.elem_type)
+
+
+    def function_call(self, function_node):
