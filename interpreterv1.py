@@ -103,4 +103,25 @@ class Interpreter(InterpreterBase):
                 )
     def function_call(self, function_node):
         if function_node.dict['name'] == 'print':
-            handle
+            self.handle_print(function_node.dict['args'])
+        elif function_node.dict['name'] == 'inputi':
+            return InterpreterBase.get_input()
+        else:
+            super().error(
+                    ErrorType.NAME_ERROR,
+                    f"function type {function_node.dict['name']} not supported",
+                )
+            
+    def handle_print(self, argument_nodes):
+        for argument in argument_nodes:
+            if argument.elem_type == '+' or argument.elem_type == '-':
+                InterpreterBase.output(argument.op1, argument.op2, argument.elem_type)
+            elif argument.elem_type == 'var':
+                InterpreterBase.output(self.variable_name_to_value[argument.dict['name']])
+            elif argument.elem_type == 'int' or argument.elem_type == 'string':
+                InterpreterBase.output(argument.dict['val'])
+            else:
+                super().error(
+                    ErrorType.NAME_ERROR,
+                    f"Cannot print the arguments",
+                )
