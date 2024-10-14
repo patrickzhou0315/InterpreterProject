@@ -68,7 +68,7 @@ class Interpreter(InterpreterBase):
         elif expression_node.elem_type == '+' or expression_node.elem_type == '-':
             return self.handle_expression(expression_node.dict['op1'], expression_node.dict['op2'], expression_node.elem_type)
         elif expression_node.elem_type == 'fcall':
-            return int(InterpreterBase.get_input(self))
+            return self.function_call(expression_node)
 
     def handle_expression(self, op1, op2, operation):
 
@@ -144,6 +144,9 @@ class Interpreter(InterpreterBase):
         if function_node.dict['name'] == 'print':
             self.handle_print(function_node.dict['args'])
         elif function_node.dict['name'] == 'inputi':
+            if function_node.dict['args'] != None:
+                for argument in function_node.dict['args']:
+                    InterpreterBase.output(self, str(self.evaluate_expression(argument)))
             return int(self.get_input())
         else:
             super().error(
