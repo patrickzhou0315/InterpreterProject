@@ -95,7 +95,7 @@ class Interpreter(InterpreterBase):
             if operation == '+':
                 return self.evaluate_expression(op1) + self.handle_expression(op2.dict['op1'], op2.dict['op2'], op2.elem_type)
             elif operation == '-':
-                return self.evaluate_expression(op2) - self.handle_expression(op2.dict['op1'], op2.dict['op2'], op2.elem_type)
+                return self.evaluate_expression(op1) - self.handle_expression(op2.dict['op1'], op2.dict['op2'], op2.elem_type)
         # if any of the operators are strings
         elif op1.elem_type == 'string' or op2.elem_type == 'string':
             super().error(
@@ -160,9 +160,4 @@ class Interpreter(InterpreterBase):
         output_string = ""
         for argument in argument_nodes:
             output_string += str(self.evaluate_expression(argument))
-        if output_string == "":
-            super().error(
-                    ErrorType.NAME_ERROR,
-                    f"Nothing to print",
-                )
         InterpreterBase.output(self, output_string)
