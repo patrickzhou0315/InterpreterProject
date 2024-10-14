@@ -66,7 +66,7 @@ class Interpreter(InterpreterBase):
         elif expression_node.elem_type == 'string':
             return expression_node.dict['val']
         elif expression_node.elem_type == '+' or expression_node.elem_type == '-':
-            return self.handle_expression(expression_node.dict['op1'], expression_node.dict['op2'], expression_node.dict['name'])
+            return self.handle_expression(expression_node.dict['op1'], expression_node.dict['op2'], expression_node.elem_type)
         elif expression_node.elem_type == 'fcall':
             if 'inputi' != expression_node.dict['name']:
                 super().error(
@@ -106,26 +106,28 @@ class Interpreter(InterpreterBase):
         # checked if any were strings or expressions already, operations can either be Value (ints) or variables
         
         elif op1.elem_type == 'var':
-            temp_var = self.evaluate_expression(op1)
-            if not isinstance(temp_var, int):
+            temp_var1 = self.evaluate_expression(op1)
+            temp_var2 = self.evaluate_expression(op2)
+            if not (isinstance(temp_var1, int) and isinstance(temp_var2, int)):
                     super().error(
-                    ErrorType.NAME_ERROR,
+                    ErrorType.TYPE_ERROR,
                     f"Unsupported operation (string concatenation when defining variables)",
                 )
             if operation == '+':
-                return temp_var + self.evaluate_expression(op2)
-            return temp_var - self.evaluate_expression(op2)
+                return temp_var1 + temp_var2
+            return temp_var1 - temp_var2
         
         elif op2.elem_type == 'var':
-            temp_var = self.evaluate_expression(op2)
-            if not isinstance(temp_var, int):
+            temp_var1 = self.evaluate_expression(op1)
+            temp_var2 = self.evaluate_expression(op2)
+            if not (isinstance(temp_var1, int) and isinstance(temp_var2, int)):
                     super().error(
-                    ErrorType.NAME_ERROR,
+                    ErrorType.TYPE_ERROR,
                     f"Unsupported operation (string concatenation when defining variables)",
                 )
             if operation == '+':
-                return temp_var + self.evaluate_expression(op1)
-            return self.evaluate_expression(op1) - temp_var
+                return temp_var1 + temp_var2
+            return temp_var1 - temp_var2
         
         # if both operators are ints
         elif op1.elem_type == 'int':
@@ -155,8 +157,12 @@ class Interpreter(InterpreterBase):
                 )
             
     def handle_print(self, argument_nodes):
-        output = ""
+        output_string = ""
         for argument in argument_nodes:
-            output += str(self.evaluate_expression(argument))
-        InterpreterBase.output(output)
-    
+            output_string += str(self.evaluate_expression(argument))
+        if output_string == "":
+            super().error(
+                    ErrorType.NAME_ERROR,
+                    f"Nothing to print",
+                )
+        InterpreterBase.output(self, output_string)
