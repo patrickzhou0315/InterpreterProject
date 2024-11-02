@@ -66,6 +66,7 @@ class Interpreter(InterpreterBase):
         while(self.__eval_comp_op(call_node.get("condition"), -2).value() == True):
             self.__run_statements(call_node.get("statements"))
             self.__assign(call_node.get("update"), -2)
+            
         self.scopes.pop()
         return
 
@@ -81,17 +82,17 @@ class Interpreter(InterpreterBase):
 
     def __do_if_statement(self, call_node):
         self.scopes.append(EnvironmentManager())
-        self.scopes[-1] = self.scopes[-2]
+        self.scopes[-1].environment = self.scopes[-2].environment
         if self.__eval_expr(call_node.get("condition")).value() == True:
             self.__run_statements(call_node.get("statements"))
-            #self.__pop_iffor_scope()
+            self.scopes.pop()
         elif self.__eval_expr(call_node.get("condition")).value() == False:
             if call_node.get("else_statements") == None:
-                #self.__pop_iffor_scope()
+                self.scopes.pop()
                 return
             else:
                 self.__run_statements(call_node.get("else_statements"))
-                #self.__pop_iffor_scope()
+                self.scopes.pop()
         else:
             super().error(ErrorType.TYPE_ERROR, f"Condition does not evaluate to boolean")
 
@@ -137,7 +138,7 @@ class Interpreter(InterpreterBase):
 
     def __assign(self, assign_ast, scope=-1):
         var_name = assign_ast.get("name")
-        value_obj = self.__eval_expr(assign_ast.get("expression"))
+        value_obj = self.__eval_expr(assign_ast.get("expression"), scope)
         if not self.scopes[scope].set(var_name, value_obj):
             super().error(
                 ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
@@ -164,14 +165,14 @@ class Interpreter(InterpreterBase):
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
             return self.__call_func(expr_ast)
         if expr_ast.elem_type in Interpreter.BIN_OPS:
-            return self.__eval_op(expr_ast)
+            return self.__eval_op(expr_ast, scope)
         if expr_ast.elem_type in Interpreter.COMP_OPS:
-            return self.__eval_comp_op(expr_ast)
+            return self.__eval_comp_op(expr_ast, scope)
         if expr_ast.elem_type in Interpreter.UNARY_OPS:
-            return self.__eval_unary_op(expr_ast)
+            return self.__eval_unary_op(expr_ast, scope)
 
-    def __eval_unary_op(self, arith_ast):
-        value_obj = self.__eval_expr(arith_ast.get("op1"))
+    def __eval_unary_op(self, arith_ast, scope=-1):
+        value_obj = self.__eval_expr(arith_ast.get("op1"), scope)
         if value_obj.type() != Type.INT and value_obj.type() != Type.BOOL:
             super().error(
                 ErrorType.TYPE_ERROR,
@@ -180,9 +181,9 @@ class Interpreter(InterpreterBase):
         f = self.op_to_lambda[value_obj.type()][arith_ast.elem_type]
         return f(value_obj)
     
-    def __eval_op(self, arith_ast):
-        left_value_obj = self.__eval_expr(arith_ast.get("op1"))
-        right_value_obj = self.__eval_expr(arith_ast.get("op2"))
+    def __eval_op(self, arith_ast, scope=-1):
+        left_value_obj = self.__eval_expr(arith_ast.get("op1"), scope)
+        right_value_obj = self.__eval_expr(arith_ast.get("op2"), scope)
         if left_value_obj.type() != right_value_obj.type():
             super().error(
                 ErrorType.TYPE_ERROR,
@@ -199,6 +200,8 @@ class Interpreter(InterpreterBase):
     def __eval_comp_op(self, arith_ast, scope=-1):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"), scope)
         right_value_obj = self.__eval_expr(arith_ast.get("op2"), scope)
+        # print(left_value_obj.type(), left_value_obj.value())
+        # print(right_value_obj.type(), right_value_obj.value())
         if left_value_obj == None or right_value_obj == None:
             if left_value_obj == None and right_value_obj == None and arith_ast.elem_type == "==":
                 return True
