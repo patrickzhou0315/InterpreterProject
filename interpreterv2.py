@@ -61,21 +61,37 @@ class Interpreter(InterpreterBase):
                 self.__do_for(statement)
 
     def __do_for(self, call_node):
+        self.scopes.append(EnvironmentManager())
+        self.__assign(call_node.get("init"), -2)
+        while(self.__eval_comp_op(call_node.get("condition"), -2).value() == True):
+            self.__run_statements(call_node.get("statements"))
+            self.__assign(call_node.get("update"), -2)
+        self.scopes.pop()
         return
 
     def __do_return(self, call_node):
+        self.scopes.pop()
         return
+    
+    # def __pop_iffor_scope(self):
+    #     for old_var in self.scopes[-2].keys():
+    #         if self.scopes[-1].get(old_var) != self.scopes[-2].get(old_var):
+    #             self.scopes[-2].set(old_var, self.scopes[-1].get(old_var))
+    #     self.scopes.pop()
 
     def __do_if_statement(self, call_node):
+        self.scopes.append(EnvironmentManager())
+        self.scopes[-1] = self.scopes[-2]
         if self.__eval_expr(call_node.get("condition")).value() == True:
             self.__run_statements(call_node.get("statements"))
+            #self.__pop_iffor_scope()
         elif self.__eval_expr(call_node.get("condition")).value() == False:
             if call_node.get("else_statements") == None:
-                # update scoping
+                #self.__pop_iffor_scope()
                 return
             else:
                 self.__run_statements(call_node.get("else_statements"))
-            self.__run_statements(call_node.get("else"))
+                #self.__pop_iffor_scope()
         else:
             super().error(ErrorType.TYPE_ERROR, f"Condition does not evaluate to boolean")
 
@@ -92,9 +108,7 @@ class Interpreter(InterpreterBase):
             # create a new scope
             self.scopes.append(EnvironmentManager())
             for (new_args, old_args) in zip(function_used.get("args"), call_node.get("args")):
-                print("hi")
                 self.scopes[-1].create(new_args.get("name"), self.__eval_expr(old_args, -2))
-
             self.__run_statements(function_used.get("statements"))
             return
         super().error(ErrorType.NAME_ERROR, f"Function {func_name} not found")
@@ -121,20 +135,18 @@ class Interpreter(InterpreterBase):
         if call_ast.get("name") == "inputs":
             return Value(Type.STRING, str(inp))
 
-    def __assign(self, assign_ast):
+    def __assign(self, assign_ast, scope=-1):
         var_name = assign_ast.get("name")
         value_obj = self.__eval_expr(assign_ast.get("expression"))
-        if not self.scopes[len(self.scopes)-1].set(var_name, value_obj):
+        if not self.scopes[scope].set(var_name, value_obj):
             super().error(
                 ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
             )
 
-    def __var_def(self, var_ast):
+    def __var_def(self, var_ast, scope=-1):
         var_name = var_ast.get("name")
-        if not self.scopes[len(self.scopes)-1].create(var_name, Value(Type.INT, 0)):
-            super().error(
-                ErrorType.NAME_ERROR, f"Duplicate definition for variable {var_name}"
-            )
+        if not self.scopes[scope].create(var_name, Value(Type.INT, 0)):
+            self.scopes[scope].set(var_name, Value(Type.INT, 0))
 
     def __eval_expr(self, expr_ast, scope=-1):
         if expr_ast.elem_type == InterpreterBase.INT_NODE:
@@ -160,7 +172,7 @@ class Interpreter(InterpreterBase):
 
     def __eval_unary_op(self, arith_ast):
         value_obj = self.__eval_expr(arith_ast.get("op1"))
-        if value_obj.type() != Type.INT or value_obj.type() != Type.BOOL:
+        if value_obj.type() != Type.INT and value_obj.type() != Type.BOOL:
             super().error(
                 ErrorType.TYPE_ERROR,
                 f"Incompatible type for {arith_ast.elem_type} operation",
@@ -184,12 +196,11 @@ class Interpreter(InterpreterBase):
         f = self.op_to_lambda[left_value_obj.type()][arith_ast.elem_type]
         return f(left_value_obj, right_value_obj)
     
-    def __eval_comp_op(self, arith_ast):
-        print("hello")
-        left_value_obj = self.__eval_expr(arith_ast.get("op1"))
-        right_value_obj = self.__eval_expr(arith_ast.get("op2"))
+    def __eval_comp_op(self, arith_ast, scope=-1):
+        left_value_obj = self.__eval_expr(arith_ast.get("op1"), scope)
+        right_value_obj = self.__eval_expr(arith_ast.get("op2"), scope)
         if left_value_obj == None or right_value_obj == None:
-            if left_value_obj == None and right_value_obj == None:
+            if left_value_obj == None and right_value_obj == None and arith_ast.elem_type == "==":
                 return True
             return False
         if left_value_obj.type() != right_value_obj.type():
