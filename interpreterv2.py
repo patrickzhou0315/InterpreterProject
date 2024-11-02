@@ -14,6 +14,7 @@ class Interpreter(InterpreterBase):
     UNARY_OPS = {"-", "neg"}
     COMP_OPS = {'==', '<', '<=', '>', '>=', '!='}
 
+    scopes = []
 
     # methods
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -27,19 +28,20 @@ class Interpreter(InterpreterBase):
     def run(self, program):
         ast = parse_program(program)
         self.__set_up_function_table(ast)
-        main_func = self.__get_func_by_name("main")
+        main_func = self.__get_func_by_name_args("main", 0)
         self.env = EnvironmentManager()
+        self.scopes.append(self.env)
         self.__run_statements(main_func.get("statements"))
 
     def __set_up_function_table(self, ast):
         self.func_name_to_ast = {}
         for func_def in ast.get("functions"):
-            self.func_name_to_ast[func_def.get("name")] = func_def
+            self.func_name_to_ast[(func_def.get("name"), len(func_def.get("args")))] = func_def
 
-    def __get_func_by_name(self, name):
-        if name not in self.func_name_to_ast:
+    def __get_func_by_name_args(self, name, args):
+        if self.func_name_to_ast.get((name, args)) == None:
             super().error(ErrorType.NAME_ERROR, f"Function {name} not found")
-        return self.func_name_to_ast[name]
+        return self.func_name_to_ast[(name, args)]
 
     def __run_statements(self, statements):
         # all statements of a function are held in arg3 of the function AST node
@@ -54,11 +56,29 @@ class Interpreter(InterpreterBase):
                 self.__var_def(statement)
             elif statement.elem_type == InterpreterBase.IF_NODE:
                 self.__do_if_statement(statement)
+            elif statement.elem_type == InterpreterBase.RETURN_NODE:
+                self.__do_return(statement)
+            elif statement.elem_type == InterpreterBase.FOR_NODE:
+                self.__do_for(statement)
 
-    def __do_if_statement(self, call_node):
+    def __do_for(self, call_node):
         return
 
+    def __do_return(self, call_node):
+        return
 
+    def __do_if_statement(self, call_node):
+        if self.__eval_expr(call_node.get("condition")).type() == True:
+            self.__run_statements(call_node.get("statements"))
+        elif self.__eval_expr(call_node.get("condition")).type() == False:
+            if call_node.get("else_statements") == None:
+                # update scoping
+                return
+            else:
+                self.__run_statements(call_node.get("else_statements"))
+            self.__run_statements(call_node.get("else"))
+        else:
+            super().error(ErrorType.TYPE_ERROR, f"Condition does not evaluate to boolean")
 
     def __call_func(self, call_node):
         func_name = call_node.get("name")
@@ -66,11 +86,11 @@ class Interpreter(InterpreterBase):
             return self.__call_print(call_node)
         if func_name == "inputi":
             return self.__call_input(call_node)
-        if self.__get_func_by_name(func_name) != None:
-            function = self.__get_func_by_name(func_name)
-            # add their scopes
-            self.__run_statements(function)
-        # add code here later to call other functions
+        if func_name == "inputs":
+            return self.__call_input(call_node)
+        if self.__get_func_by_name_args(func_name, len(call_node.get("args"))) != None:
+            # add scopes
+            return
         super().error(ErrorType.NAME_ERROR, f"Function {func_name} not found")
 
     def __call_print(self, call_ast):
@@ -92,7 +112,8 @@ class Interpreter(InterpreterBase):
         inp = super().get_input()
         if call_ast.get("name") == "inputi":
             return Value(Type.INT, int(inp))
-        # we can support inputs here later
+        if call_ast.get("name") == "inputs":
+            return Value(Type.STRING, str(inp))
 
     def __assign(self, assign_ast):
         var_name = assign_ast.get("name")
@@ -122,13 +143,21 @@ class Interpreter(InterpreterBase):
             return val
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
             return self.__call_func(expr_ast)
-        if expr_ast.elem_type in Interpreter.BIN_OPS:
+        if expr_ast.elem_type in Interpreter.BIN_OPS or Interpreter.COMP_OPS:
             return self.__eval_op(expr_ast)
         if expr_ast.elem_type in Interpreter.UNARY_OPS:
             return self.__eval_unary_op(expr_ast)
 
     def __eval_unary_op(self, arith_ast):
         value_obj = self.__eval_expr(arith_ast.get("op1"))
+        if value_obj.type() != Type.INT or value_obj.type() != Type.BOOL:
+            super().error(
+                ErrorType.TYPE_ERROR,
+                f"Incompatible type for {arith_ast.elem_type} operation",
+            )
+        f = self.op_to_lambda[value_obj.type()][arith_ast.elem_type]
+        return f(value_obj)
+    
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
         right_value_obj = self.__eval_expr(arith_ast.get("op2"))
@@ -149,6 +178,7 @@ class Interpreter(InterpreterBase):
         self.op_to_lambda = {}
         # set up operations on integers
         self.op_to_lambda[Type.INT] = {}
+        # arithmetic operatoins
         self.op_to_lambda[Type.INT]["+"] = lambda x, y: Value(
             x.type(), x.value() + y.value()
         )
@@ -161,32 +191,62 @@ class Interpreter(InterpreterBase):
         self.op_to_lambda[Type.INT]["/"] = lambda x, y: Value(
             x.type(), x.value() // y.value()
         )
-        
+        # unary operators
+        self.op_to_lambda[Type.INT]['neg'] = lambda x: Value(
+            x.type(), -1 * x.value()
+        )
+        # comparison operators
+        self.op_to_lambda[Type.INT]['=='] = lambda x, y: Value(
+            Type.BOOL, x.value() == y.value()
+        )
+        self.op_to_lambda[Type.INT]['!='] = lambda x, y: Value(
+            Type.BOOL, x.value() != y.value()
+        )
+        self.op_to_lambda[Type.INT]['<'] = lambda x, y: Value(
+            Type.BOOL, x.value() < y.value()
+        )
+        self.op_to_lambda[Type.INT]["<="] = lambda x, y: Value(
+            Type.BOOL, x.value() <= y.value()
+        )
+        self.op_to_lambda[Type.INT]['>'] = lambda x, y: Value(
+            Type.BOOL, x.value() > y.value()
+        )
+        self.op_to_lambda[Type.INT][">="] = lambda x, y: Value(
+            Type.BOOL, x.value() >= y.value()
+        )
 
         # set up operations on booleans
         self.op_to_lambda[Type.BOOL] = {}
-        self.op_to_lambda[Type.BOOL]['>'] = lambda x, y: Value(
-            x.type(), x.value() > y.value()
+        # logical binary operators
+        self.op_to_lambda[Type.BOOL]["||"] = lambda x, y: Value(
+            x.type(), x.value() or y.value()
         )
-        self.op_to_lambda[Type.BOOL]['<'] = lambda x, y: Value(
-            x.type(), x.value() < y.value()
+        self.op_to_lambda[Type.BOOL]["&&"] = lambda x, y: Value(
+            x.type(), x.value() and y.value()
         )
-        self.op_to_lambda[Type.INT][">="] = lambda x, y: Value(
-            x.type(), x.value() >= y.value()
+        # logical unary operators
+        self.op_to_lambda[Type.BOOL]["!"] = lambda x: Value(
+            x.type(), not x.value()
         )
-        self.op_to_lambda[Type.INT]["<="] = lambda x, y: Value(
-            x.type(), x.value() <= y.value()
-        )
+        # comparison operators
         self.op_to_lambda[Type.BOOL]['=='] = lambda x, y: Value(
             x.type(), x.value() == y.value()
         )
         self.op_to_lambda[Type.BOOL]['!='] = lambda x, y: Value(
             x.type(), x.value() != y.value()
         )
-        self.op_to_lambda[Type.INT]["||"] = lambda x, y: Value(
-            x.type(), x.value() or y.value()
+
+        # set up operations on strings
+        self.op_to_lambda[Type.STRING] = {}
+
+        # binary operators
+        self.op_to_lambda[Type.STRING]["+"] = lambda x, y: Value(
+            x.type(), x.value() + y.value()
         )
-        self.op_to_lambda[Type.INT]["&&"] = lambda x, y: Value(
-            x.type(), x.value() and y.value()
+        #comparison operators
+        self.op_to_lambda[Type.STRING]["=="] = lambda x, y: Value(
+            Type.BOOL, x.value() == y.value()
         )
-        # add other operators here later for int, string, bool, etc
+        self.op_to_lambda[Type.STRING]["!="] = lambda x, y: Value(
+            Type.BOOL, x.value() != y.value()
+        )
