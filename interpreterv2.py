@@ -10,7 +10,10 @@ from brewparse import parse_program
 # Main interpreter class
 class Interpreter(InterpreterBase):
     # constants
-    BIN_OPS = {"+", "-"}
+    BIN_OPS = {"+", "-", "*", "/"}
+    UNARY_OPS = {"-", "neg"}
+    COMP_OPS = {'==', '<', '<=', '>', '>=', '!='}
+
 
     # methods
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -49,6 +52,12 @@ class Interpreter(InterpreterBase):
                 self.__assign(statement)
             elif statement.elem_type == InterpreterBase.VAR_DEF_NODE:
                 self.__var_def(statement)
+            elif statement.elem_type == InterpreterBase.IF_NODE:
+                self.__do_if_statement(statement)
+
+    def __do_if_statement(self, call_node):
+        return
+
 
 
     def __call_func(self, call_node):
@@ -57,7 +66,10 @@ class Interpreter(InterpreterBase):
             return self.__call_print(call_node)
         if func_name == "inputi":
             return self.__call_input(call_node)
-
+        if self.__get_func_by_name(func_name) != None:
+            function = self.__get_func_by_name(func_name)
+            # add their scopes
+            self.__run_statements(function)
         # add code here later to call other functions
         super().error(ErrorType.NAME_ERROR, f"Function {func_name} not found")
 
@@ -112,7 +124,11 @@ class Interpreter(InterpreterBase):
             return self.__call_func(expr_ast)
         if expr_ast.elem_type in Interpreter.BIN_OPS:
             return self.__eval_op(expr_ast)
+        if expr_ast.elem_type in Interpreter.UNARY_OPS:
+            return self.__eval_unary_op(expr_ast)
 
+    def __eval_unary_op(self, arith_ast):
+        value_obj = self.__eval_expr(arith_ast.get("op1"))
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
         right_value_obj = self.__eval_expr(arith_ast.get("op2"))
@@ -138,5 +154,39 @@ class Interpreter(InterpreterBase):
         )
         self.op_to_lambda[Type.INT]["-"] = lambda x, y: Value(
             x.type(), x.value() - y.value()
+        )
+        self.op_to_lambda[Type.INT]["*"] = lambda x, y: Value(
+            x.type(), x.value() * y.value()
+        )
+        self.op_to_lambda[Type.INT]["/"] = lambda x, y: Value(
+            x.type(), x.value() // y.value()
+        )
+        
+
+        # set up operations on booleans
+        self.op_to_lambda[Type.BOOL] = {}
+        self.op_to_lambda[Type.BOOL]['>'] = lambda x, y: Value(
+            x.type(), x.value() > y.value()
+        )
+        self.op_to_lambda[Type.BOOL]['<'] = lambda x, y: Value(
+            x.type(), x.value() < y.value()
+        )
+        self.op_to_lambda[Type.INT][">="] = lambda x, y: Value(
+            x.type(), x.value() >= y.value()
+        )
+        self.op_to_lambda[Type.INT]["<="] = lambda x, y: Value(
+            x.type(), x.value() <= y.value()
+        )
+        self.op_to_lambda[Type.BOOL]['=='] = lambda x, y: Value(
+            x.type(), x.value() == y.value()
+        )
+        self.op_to_lambda[Type.BOOL]['!='] = lambda x, y: Value(
+            x.type(), x.value() != y.value()
+        )
+        self.op_to_lambda[Type.INT]["||"] = lambda x, y: Value(
+            x.type(), x.value() or y.value()
+        )
+        self.op_to_lambda[Type.INT]["&&"] = lambda x, y: Value(
+            x.type(), x.value() and y.value()
         )
         # add other operators here later for int, string, bool, etc
