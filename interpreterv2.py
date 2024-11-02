@@ -13,7 +13,6 @@ class Interpreter(InterpreterBase):
     BIN_OPS = {"+", "-", "*", "/"}
     UNARY_OPS = {"-", "neg"}
     COMP_OPS = {'==', '<', '<=', '>', '>=', '!='}
-
     scopes = []
 
     # methods
@@ -68,9 +67,9 @@ class Interpreter(InterpreterBase):
         return
 
     def __do_if_statement(self, call_node):
-        if self.__eval_expr(call_node.get("condition")).type() == True:
+        if self.__eval_expr(call_node.get("condition")).value() == True:
             self.__run_statements(call_node.get("statements"))
-        elif self.__eval_expr(call_node.get("condition")).type() == False:
+        elif self.__eval_expr(call_node.get("condition")).value() == False:
             if call_node.get("else_statements") == None:
                 # update scoping
                 return
@@ -89,7 +88,14 @@ class Interpreter(InterpreterBase):
         if func_name == "inputs":
             return self.__call_input(call_node)
         if self.__get_func_by_name_args(func_name, len(call_node.get("args"))) != None:
-            # add scopes
+            function_used = self.__get_func_by_name_args(func_name, len(call_node.get("args")))
+            # create a new scope
+            self.scopes.append(EnvironmentManager())
+            for (new_args, old_args) in zip(function_used.get("args"), call_node.get("args")):
+                print("hi")
+                self.scopes[-1].create(new_args.get("name"), self.__eval_expr(old_args, -2))
+
+            self.__run_statements(function_used.get("statements"))
             return
         super().error(ErrorType.NAME_ERROR, f"Function {func_name} not found")
 
@@ -118,33 +124,37 @@ class Interpreter(InterpreterBase):
     def __assign(self, assign_ast):
         var_name = assign_ast.get("name")
         value_obj = self.__eval_expr(assign_ast.get("expression"))
-        if not self.env.set(var_name, value_obj):
+        if not self.scopes[len(self.scopes)-1].set(var_name, value_obj):
             super().error(
                 ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
             )
 
     def __var_def(self, var_ast):
         var_name = var_ast.get("name")
-        if not self.env.create(var_name, Value(Type.INT, 0)):
+        if not self.scopes[len(self.scopes)-1].create(var_name, Value(Type.INT, 0)):
             super().error(
                 ErrorType.NAME_ERROR, f"Duplicate definition for variable {var_name}"
             )
 
-    def __eval_expr(self, expr_ast):
+    def __eval_expr(self, expr_ast, scope=-1):
         if expr_ast.elem_type == InterpreterBase.INT_NODE:
             return Value(Type.INT, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.STRING_NODE:
             return Value(Type.STRING, expr_ast.get("val"))
+        if expr_ast.elem_type == InterpreterBase.BOOL_NODE:
+            return Value(Type.BOOL, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.VAR_NODE:
             var_name = expr_ast.get("name")
-            val = self.env.get(var_name)
+            val = self.scopes[scope].get(var_name)
             if val is None:
                 super().error(ErrorType.NAME_ERROR, f"Variable {var_name} not found")
             return val
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
             return self.__call_func(expr_ast)
-        if expr_ast.elem_type in Interpreter.BIN_OPS or Interpreter.COMP_OPS:
+        if expr_ast.elem_type in Interpreter.BIN_OPS:
             return self.__eval_op(expr_ast)
+        if expr_ast.elem_type in Interpreter.COMP_OPS:
+            return self.__eval_comp_op(expr_ast)
         if expr_ast.elem_type in Interpreter.UNARY_OPS:
             return self.__eval_unary_op(expr_ast)
 
@@ -166,6 +176,26 @@ class Interpreter(InterpreterBase):
                 ErrorType.TYPE_ERROR,
                 f"Incompatible types for {arith_ast.elem_type} operation",
             )
+        if arith_ast.elem_type not in self.op_to_lambda[left_value_obj.type()]:
+            super().error(
+                ErrorType.TYPE_ERROR,
+                f"Incompatible operator {arith_ast.elem_type} for type {left_value_obj.type()}",
+            )
+        f = self.op_to_lambda[left_value_obj.type()][arith_ast.elem_type]
+        return f(left_value_obj, right_value_obj)
+    
+    def __eval_comp_op(self, arith_ast):
+        print("hello")
+        left_value_obj = self.__eval_expr(arith_ast.get("op1"))
+        right_value_obj = self.__eval_expr(arith_ast.get("op2"))
+        if left_value_obj == None or right_value_obj == None:
+            if left_value_obj == None and right_value_obj == None:
+                return True
+            return False
+        if left_value_obj.type() != right_value_obj.type():
+            if arith_ast.elem_type == '!=':
+                return True
+            return False
         if arith_ast.elem_type not in self.op_to_lambda[left_value_obj.type()]:
             super().error(
                 ErrorType.TYPE_ERROR,
