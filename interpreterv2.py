@@ -56,15 +56,14 @@ class Interpreter(InterpreterBase):
                 self.__var_def(statement)
             elif statement.elem_type == InterpreterBase.FOR_NODE:
                 val = self.__run_for(statement)
-                if val[0] == True:
+                if val == None and val[0] == True:
                     return val
             elif statement.elem_type == InterpreterBase.IF_NODE:
                 val = self.__run_if(statement)
-                if val[0] == True:
+                if val != None and val[0] == True:
                     return val
             elif statement.elem_type == InterpreterBase.RETURN_NODE:
                 returned_expression = self.__eval_expr(statement.get("expression"))
-                
                 return (True, returned_expression)
         return (False, 0)
 
@@ -73,7 +72,7 @@ class Interpreter(InterpreterBase):
         self.scopes.append(EnvironmentManager())
         while (self.__eval_comp(for_node.get("condition")) == True):
             value = self.__run_statements(for_node.get("statements"))
-            if value[0] == True:
+            if value != None and value[0] == True:
                 self.scopes.pop()
                 return value
             self.__assign(for_node.get("update"))
@@ -84,15 +83,16 @@ class Interpreter(InterpreterBase):
         if (self.__eval_comp(if_node.get("condition"))):
             self.scopes.append(EnvironmentManager())
             value = self.__run_statements(if_node.get("statements"))
-            if value[0] == True:
+            if value != None and value[0] == True:
                 self.scopes.pop()
                 return value
+            self.scopes.pop()
             # add what's supposed to happen if one of the statements had a return
         
         elif (self.__eval_comp(if_node.get("condition")) == False):
             self.scopes.append(EnvironmentManager())
             value = self.__run_statements(if_node.get("else_statements"))
-            if value[0] == True:
+            if value != None and value[0] == True:
                 self.scopes.pop()
                 return value
             self.scopes.pop()
@@ -116,7 +116,7 @@ class Interpreter(InterpreterBase):
                 ErrorType.NAME_ERROR, f"Duplicate definition for variable {new_arg.get("name")}"
                 )
             returned = self.__run_statements(function_used.get("statements"))
-            if returned[0] == True:
+            if returned != None and returned[0] == True:
                 self.scopes.pop()
                 return returned[1]
             self.scopes.pop()
@@ -232,12 +232,17 @@ class Interpreter(InterpreterBase):
                 ErrorType.TYPE_ERROR,
                 f"Incompatible operator {comp_ast.elem_type} for type {left_value_obj.type()}",
             )
-        f = self.op_to_lambda[left_value_obj][comp_ast.elem_type]
-        if f(left_value_obj, right_value_obj) != True or f(left_value_obj, right_value_obj) != False:
+        f = self.op_to_lambda[left_value_obj.type()][comp_ast.elem_type]
+        
+        if f(left_value_obj, right_value_obj).value() != True and f(left_value_obj, right_value_obj).value() != False:
             super().error(
                 ErrorType.TYPE_ERROR,
                 f"Incompatible operator {comp_ast.elem_type} for type {left_value_obj.type()}",
             )
+        if left_value_obj.type() != right_value_obj.type():
+            if comp_ast.elem_type == '==':
+                return False
+            return True
         return f(left_value_obj, right_value_obj)
 
     def __setup_ops(self):
