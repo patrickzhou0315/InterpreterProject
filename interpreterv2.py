@@ -56,7 +56,7 @@ class Interpreter(InterpreterBase):
                 self.__var_def(statement)
             elif statement.elem_type == InterpreterBase.FOR_NODE:
                 val = self.__run_for(statement)
-                if val == None and val[0] == True:
+                if val != None and val[0] == True:
                     return val
             elif statement.elem_type == InterpreterBase.IF_NODE:
                 val = self.__run_if(statement)
@@ -69,15 +69,14 @@ class Interpreter(InterpreterBase):
 
     def __run_for(self, for_node):
         self.__assign(for_node.get("init"))
-        self.scopes.append(EnvironmentManager())
-        while (self.__eval_comp(for_node.get("condition")) == True):
+        while (self.__eval_comp(for_node.get("condition")).value() == True):
+            self.scopes.append(EnvironmentManager())
             value = self.__run_statements(for_node.get("statements"))
             if value != None and value[0] == True:
                 self.scopes.pop()
                 return value
+            self.scopes.pop()
             self.__assign(for_node.get("update"))
-            self.scopes[-1].environment = {}
-        self.scopes.pop()
 
     def __run_if(self, if_node):
         if (self.__eval_comp(if_node.get("condition"))):
@@ -106,9 +105,10 @@ class Interpreter(InterpreterBase):
         if func_name == "inputi":
             return self.__call_input(call_node)
         if self.__get_func_by_name_args(func_name, len(call_node.get("args"))) != None:
-            function_used = self.__get_func_by_name_args(call_node.get("name"), len(call_node.get("args")))
             self.scopes.append(EnvironmentManager())
+            function_used = self.__get_func_by_name_args(call_node.get("name"), len(call_node.get("args")))
             self.scopes[-1].isFunction = True
+
             # create all the variables for the new function arguments and assign them to what they were called with
             for (new_arg, old_arg) in zip(function_used.get("args"), call_node.get("args")):
                 if not self.scopes[-1].create(new_arg.get("name"), self.__eval_expr(old_arg, -2)):
@@ -152,12 +152,14 @@ class Interpreter(InterpreterBase):
     def __assign(self, assign_ast, scope=-1):
         var_name = assign_ast.get("name")
         value_obj = self.__eval_expr(assign_ast.get("expression"))
-        if not self.scopes[self.__find_which_previous_scope(var_name)].set(var_name, value_obj):
+        if not self.scopes[self.__find_which_previous_scope(var_name, scope)].set(var_name, value_obj):
             super().error(
                 ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
             )
 
-    def __find_which_previous_scope(self, varname):
+    def __find_which_previous_scope(self, varname, scope=-1):
+        if varname in self.scopes[scope].environment.keys():
+            return scope
         for i in range(len(self.scopes)):
             if self.scopes[-(i+1)].checkisFunction() == False:
                 val = self.scopes[-(i+1)].get(varname)
@@ -165,10 +167,9 @@ class Interpreter(InterpreterBase):
                     return i
                 else:
                     break
-        val = self.scopes[-1].get(varname)
-        if val is None:
+        if varname not in self.scopes[scope].environment.keys():
             super().error(ErrorType.NAME_ERROR, f"Variable {varname} not found")
-        return -1
+        return scope
 
     def __var_def(self, var_ast, scope=-1):
         var_name = var_ast.get("name")
@@ -188,7 +189,7 @@ class Interpreter(InterpreterBase):
             return Value(Type.BOOL, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.VAR_NODE:
             var_name = expr_ast.get("name")
-            return self.scopes[self.__find_which_previous_scope(var_name)].get(var_name)
+            return self.scopes[self.__find_which_previous_scope(var_name, scope)].get(var_name)
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
             return self.__call_func(expr_ast)
         if expr_ast.elem_type in Interpreter.BIN_OPS:
