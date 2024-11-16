@@ -130,23 +130,25 @@ class Interpreter(InterpreterBase):
 
         # first evaluate all of the actual parameters and associate them with the formal parameter names
         args = {}
-        
+
         for formal_ast, actual_ast in zip(formal_args, actual_args):
             formal_arg_type = formal_ast.get("var_type")
             actual_arg_type = actual_ast.get("var_type")
-            if formal_arg_type != actual_arg_type:
-                super().error(
-                    ErrorType.TYPE_ERROR,
-                    f"Invalid Types called with function: formal type {formal_arg_type} and actual argument {actual_arg_type}"
-                )
             result = self.__eval_expr(actual_ast)
+            result = self.__coerce_value(actual_arg_type, result)
+            result = self.__coerce_value(formal_arg_type, result)
+
+            # if the thing being passed through isn't a struct
             if formal_arg_type not in self.structs:
+
+                # if the thing being passed through isn't a primitive
                 if formal_arg_type not in self.PRIMITIVES:
                     super().error(
                         ErrorType.TYPE_ERROR,
                         f"Invalid Types called with function: formal type {formal_arg_type} and actual argument {actual_arg_type}"
                     )
-                result = copy.copy(self.__eval_expr(actual_ast))
+                # the argument passed through is a primitive, so make a copy of it to pass by value
+                result = copy.copy(result)
             arg_name = formal_ast.get("name")
             args[arg_name] = result
 
@@ -158,12 +160,26 @@ class Interpreter(InterpreterBase):
         return_type = func_ast.get("return_type")
         _, return_val = self.__run_statements(func_ast.get("statements"))
         self.env.pop_func()
-        if return_type != return_val.type():
+
+        # if it returns nothing and the return type indicates that it should return something
+        if return_val == Interpreter.NIL_VALUE and return_type != Interpreter.VOID_DEF:
+            return self.get_default_value(return_type)
+        if return_val == Interpreter.NIL_VALUE and return_type == Interpreter.VOID_DEF:
+            return return_val
+        return_val = self.__coerce_value(return_type, return_val)
+        return return_val
+    
+    def __coerce_value(self, coercer_type, coercee):
+        if coercer_type == Type.BOOL and coercee.type() == Type.INT:
+            if coercee.value() == 0:
+                return Value(Type.BOOL, False)
+            return Value(Type.BOOL, True)
+        if coercer_type != coercee.type():
             super().error(
                 ErrorType.TYPE_ERROR,
-                f"Return Types {return_type} and {return_val.type()} are not compatible"
+                f"Cannot coerce type {coercee.type} into {coercer_type}"
             )
-        return return_val
+        return coercee
 
     def __call_print(self, args):
         output = ""
@@ -190,10 +206,36 @@ class Interpreter(InterpreterBase):
     def __assign(self, assign_ast):
         var_name = assign_ast.get("name")
         value_obj = self.__eval_expr(assign_ast.get("expression"))
-        if not self.env.set(var_name, value_obj):
-            super().error(
-                ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
-            )
+        if '.' in var_name:
+            struct_var = var_name.split('.')
+            root_var_name = struct_var[0]
+            struct = self.env.get(root_var_name)
+            if struct is None:
+                super().error(
+                    ErrorType.NAME_ERROR, f"Undefined struct variable {root_var_name}"
+                )
+            current = struct
+            for field_name in struct_var[1:-1]:
+                if field_name not in current.value().keys():
+                    super().error(
+                        ErrorType.NAME_ERROR, f"field {field_name} does not exist"
+                    )
+                current = current.value().get(field_name)
+                if current is None:
+                    super().error(
+                        ErrorType.NAME_ERROR, f"field {field_name} is undefined"
+                    )
+            final_field = struct_var[-1]
+            if final_field not in current.value().keys():
+                super().error(ErrorType.NAME_ERROR, f"Field {field_name} does not exist in {root_var_name}")
+            assigned_value = self.__coerce_value(current.value().get(final_field).type(), value_obj)
+            current.value()[final_field] = assigned_value
+
+        else:
+            if not self.env.set(var_name, value_obj):
+                super().error(
+                    ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
+                )
     
     def __var_def(self, var_ast):
         var_name = var_ast.get("name")
@@ -215,10 +257,34 @@ class Interpreter(InterpreterBase):
             return Value(Type.BOOL, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.VAR_NODE:
             var_name = expr_ast.get("name")
-            val = self.env.get(var_name)
-            if val is None:
-                super().error(ErrorType.NAME_ERROR, f"Variable {var_name} not found")
-            return val
+            if '.' in var_name:
+                struct_var = var_name.split('.')
+                root_var_name = struct_var[0]
+                struct = self.env.get(root_var_name)
+                if struct is None:
+                    super().error(
+                        ErrorType.NAME_ERROR, f"Undefined struct variable {root_var_name}"
+                    )
+                current = struct
+                for field_name in struct_var[1:-1]:
+                    if field_name not in current.value().keys():
+                        super().error(
+                            ErrorType.NAME_ERROR, f"field {field_name} does not exist"
+                        )
+                    current = current.value().get(field_name)
+                    if current is None:
+                        super().error(
+                            ErrorType.NAME_ERROR, f"field {field_name} is undefined"
+                        )
+                final_field = struct_var[-1]
+                if final_field not in current.value().keys():
+                    super().error(ErrorType.NAME_ERROR, f"Field {field_name} does not exist in {root_var_name}")
+                return current.value().get(final_field).value()
+            else:
+                val = self.env.get(var_name)
+                if val is None:
+                    super().error(ErrorType.NAME_ERROR, f"Variable {var_name} not found")
+                return val
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
             return self.__call_func(expr_ast)
         if expr_ast.elem_type in Interpreter.BIN_OPS:
@@ -263,10 +329,15 @@ class Interpreter(InterpreterBase):
         if not self.__compatible_types(
             arith_ast.elem_type, left_value_obj, right_value_obj
         ):
-            super().error(
-                ErrorType.TYPE_ERROR,
-                f"Incompatible types for {arith_ast.elem_type} operation",
-            )
+            if left_value_obj.type() == Type.BOOL and right_value_obj.type() == Type.INT():
+                right_value_obj = self.__coerce_value(left_value_obj.type(), right_value_obj)
+            elif left_value_obj.type() == Type.INT and right_value_obj.type() == Type.BOOL():
+                left_value_obj = self.__coerce_value(right_value_obj.type(), left_value_obj)
+            else:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Incompatible types for {arith_ast.elem_type} operation",
+                )
         if arith_ast.elem_type not in self.op_to_lambda[left_value_obj.type()]:
             super().error(
                 ErrorType.TYPE_ERROR,
@@ -284,6 +355,8 @@ class Interpreter(InterpreterBase):
     def __eval_unary(self, arith_ast, t, f):
         value_obj = self.__eval_expr(arith_ast.get("op1"))
         if value_obj.type() != t:
+            # value_obj = self.__coerce_value(t, value_obj)
+            # if value_obj.type() != Type.BOOL:
             super().error(
                 ErrorType.TYPE_ERROR,
                 f"Incompatible type for {arith_ast.elem_type} operation",
@@ -363,10 +436,8 @@ class Interpreter(InterpreterBase):
         cond_ast = if_ast.get("condition")
         result = self.__eval_expr(cond_ast)
         if result.type() != Type.BOOL:
-            super().error(
-                ErrorType.TYPE_ERROR,
-                "Incompatible type for if condition",
-            )
+            result = self.__coerce_value(Type.BOOL, result)
+            # this should already have thrown an error if it couldn't coerce
         if result.value():
             statements = if_ast.get("statements")
             status, return_val = self.__run_statements(statements)
@@ -389,10 +460,8 @@ class Interpreter(InterpreterBase):
         while run_for.value():
             run_for = self.__eval_expr(cond_ast)  # check for-loop condition
             if run_for.type() != Type.BOOL:
-                super().error(
-                    ErrorType.TYPE_ERROR,
-                    "Incompatible type for for condition",
-                )
+                run_for = self.__coerce_value(Type.BOOL, run_for)
+                # this should throw an error if it can't coerce
             if run_for.value():
                 statements = for_ast.get("statements")
                 status, return_val = self.__run_statements(statements)
@@ -406,5 +475,12 @@ class Interpreter(InterpreterBase):
         expr_ast = return_ast.get("expression")
         if expr_ast is None:
             return (ExecStatus.RETURN, Interpreter.NIL_VALUE)
-        value_obj = copy.copy(self.__eval_expr(expr_ast))
+        value = self.__eval_expr(expr_ast)
+        if value.type() not in self.structs:
+            if value.type() not in self.PRIMITIVES:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Invalid Type returned {value.type()}"
+                )
+            value_obj = copy.copy(self.__eval_expr(expr_ast))
         return (ExecStatus.RETURN, value_obj)
