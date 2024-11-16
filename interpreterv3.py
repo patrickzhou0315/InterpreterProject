@@ -24,15 +24,31 @@ class Interpreter(InterpreterBase):
         super().__init__(console_output, inp)
         self.trace_output = trace_output
         self.__setup_ops()
+        self.structs = {}
 
     # run a program that's provided in a string
     # usese the provided Parser found in brewparse.py to parse the program
     # into an abstract syntax tree (ast)
     def run(self, program):
         ast = parse_program(program)
+        self.__parse_structs(ast)
         self.__set_up_function_table(ast)
         self.env = EnvironmentManager()
         self.__call_func_aux("main", [])
+
+    def __parse_structs(self, program_node):
+        for struct_node in program_node.get("structs"):
+            struct_name = struct_node.get("name")
+            if struct_name in self.structs:
+                super.error(
+                    ErrorType.NAME_ERROR, 
+                    f"Duplicate Struct Definition for: {struct_name}"
+                )
+            fields = {}
+            for field_node in struct_node.get("fields"):
+                fields[field_node.get("name")] = field_node.get("var_type")
+            self.structs[struct_name] = fields
+            
 
     def __set_up_function_table(self, ast):
         self.func_name_to_ast = {}
@@ -106,6 +122,11 @@ class Interpreter(InterpreterBase):
 
         # first evaluate all of the actual parameters and associate them with the formal parameter names
         args = {}
+
+        # probably work on the type check for each argument and the type of the argument passed into it here
+
+
+
         for formal_ast, actual_ast in zip(formal_args, actual_args):
             result = copy.copy(self.__eval_expr(actual_ast))
             arg_name = formal_ast.get("name")
@@ -184,6 +205,8 @@ class Interpreter(InterpreterBase):
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
         right_value_obj = self.__eval_expr(arith_ast.get("op2"))
+
+        # probably add coercion of ints to bools and bools to ints somewhere here
         if not self.__compatible_types(
             arith_ast.elem_type, left_value_obj, right_value_obj
         ):
