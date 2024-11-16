@@ -48,7 +48,6 @@ class Interpreter(InterpreterBase):
             for field_node in struct_node.get("fields"):
                 fields[field_node.get("name")] = field_node.get("var_type")
             self.structs[struct_name] = fields
-            
 
     def __set_up_function_table(self, ast):
         self.func_name_to_ast = {}
@@ -173,7 +172,9 @@ class Interpreter(InterpreterBase):
     
     def __var_def(self, var_ast):
         var_name = var_ast.get("name")
-        if not self.env.create(var_name, Interpreter.NIL_VALUE):
+        var_type = var_ast.get("var_type")
+        default_value = self.get_default_value(var_type)
+        if not self.env.create(var_name, default_value):
             super().error(
                 ErrorType.NAME_ERROR, f"Duplicate definition for variable {var_name}"
             )
@@ -201,6 +202,41 @@ class Interpreter(InterpreterBase):
             return self.__eval_unary(expr_ast, Type.INT, lambda x: -1 * x)
         if expr_ast.elem_type == Interpreter.NOT_NODE:
             return self.__eval_unary(expr_ast, Type.BOOL, lambda x: not x)
+        if expr_ast.elem_type == Interpreter.NEW_NODE:
+            return self.__execute_new(expr_ast.get("var_type"))
+        
+    def __execute_new(self, struct_name):
+        if struct_name not in self.structs:
+            super().error(
+                ErrorType.TYPE_ERROR,
+                f"Undefined Struct Type: {struct_name}"
+            )
+        struct_fields = self.structs[struct_name]
+        struct_instance = {}
+        for field_name, field_type in struct_fields.items():
+            struct_instance[field_name] = 
+
+
+
+
+
+
+
+
+
+
+    def get_default_value(self, var_type):
+        if var_type == Type.INT:
+            return 0
+        elif var_type == Type.BOOL:
+            return False
+        elif var_type == Type.STRING:
+            return ""
+        elif var_type in self.structs:
+            return None
+        else:
+            super().error(ErrorType.TYPE_ERROR,
+            f"Invalid type: {var_type}")
 
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
