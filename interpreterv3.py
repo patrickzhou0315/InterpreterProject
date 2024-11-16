@@ -18,6 +18,7 @@ class Interpreter(InterpreterBase):
     NIL_VALUE = create_value(InterpreterBase.NIL_DEF)
     TRUE_VALUE = create_value(InterpreterBase.TRUE_DEF)
     BIN_OPS = {"+", "-", "*", "/", "==", "!=", ">", ">=", "<", "<=", "||", "&&"}
+    PRIMITIVES = [Type.INT, Type.BOOL, Type.STRING]
 
     # methods
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -46,6 +47,14 @@ class Interpreter(InterpreterBase):
                 )
             fields = {}
             for field_node in struct_node.get("fields"):
+                field_type = field_node.get("var_type")
+                if field_type not in self.PRIMITIVES:
+                    if field_type not in self.structs:
+                        if field_type != struct_name:
+                            super.error(
+                            ErrorType.NAME_ERROR, 
+                            f"Duplicate Struct Definition for: {struct_name}"
+                            )
                 fields[field_node.get("name")] = field_node.get("var_type")
             self.structs[struct_name] = fields
 
@@ -121,13 +130,23 @@ class Interpreter(InterpreterBase):
 
         # first evaluate all of the actual parameters and associate them with the formal parameter names
         args = {}
-
-        # probably work on the type check for each argument and the type of the argument passed into it here
-
-
-
+        
         for formal_ast, actual_ast in zip(formal_args, actual_args):
-            result = copy.copy(self.__eval_expr(actual_ast))
+            formal_arg_type = formal_ast.get("var_type")
+            actual_arg_type = actual_ast.get("var_type")
+            if formal_arg_type != actual_arg_type:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Invalid Types called with function: formal type {formal_arg_type} and actual argument {actual_arg_type}"
+                )
+            result = self.__eval_expr(actual_ast)
+            if formal_arg_type not in self.structs:
+                if formal_arg_type not in self.PRIMITIVES:
+                    super().error(
+                        ErrorType.TYPE_ERROR,
+                        f"Invalid Types called with function: formal type {formal_arg_type} and actual argument {actual_arg_type}"
+                    )
+                result = copy.copy(self.__eval_expr(actual_ast))
             arg_name = formal_ast.get("name")
             args[arg_name] = result
 
@@ -136,8 +155,14 @@ class Interpreter(InterpreterBase):
         # and add the formal arguments to the activation record
         for arg_name, value in args.items():
           self.env.create(arg_name, value)
+        return_type = func_ast.get("return_type")
         _, return_val = self.__run_statements(func_ast.get("statements"))
         self.env.pop_func()
+        if return_type != return_val.type():
+            super().error(
+                ErrorType.TYPE_ERROR,
+                f"Return Types {return_type} and {return_val.type()} are not compatible"
+            )
         return return_val
 
     def __call_print(self, args):
@@ -214,26 +239,18 @@ class Interpreter(InterpreterBase):
         struct_fields = self.structs[struct_name]
         struct_instance = {}
         for field_name, field_type in struct_fields.items():
-            struct_instance[field_name] = 
-
-
-
-
-
-
-
-
-
+            struct_instance[field_name] = self.get_default_value(field_type)
+        return Value(struct_name, struct_instance)
 
     def get_default_value(self, var_type):
         if var_type == Type.INT:
-            return 0
+            return Value(Type.INT, 0)
         elif var_type == Type.BOOL:
-            return False
+            return Value(Type.BOOL, False)
         elif var_type == Type.STRING:
-            return ""
+            return Value(Type.STRING, "")
         elif var_type in self.structs:
-            return None
+            return Value(Type.NIL, None)
         else:
             super().error(ErrorType.TYPE_ERROR,
             f"Invalid type: {var_type}")
