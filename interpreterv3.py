@@ -165,7 +165,7 @@ class Interpreter(InterpreterBase):
         if return_val == Interpreter.NIL_VALUE and return_type != Interpreter.VOID_DEF:
             return self.get_default_value(return_type)
         if return_val == Interpreter.NIL_VALUE and return_type == Interpreter.VOID_DEF:
-            return return_val
+            return Value(Type.VOID, None)
         return_val = self.__coerce_value(return_type, return_val)
         return return_val
     
@@ -286,7 +286,11 @@ class Interpreter(InterpreterBase):
                     super().error(ErrorType.NAME_ERROR, f"Variable {var_name} not found")
                 return val
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
-            return self.__call_func(expr_ast)
+            # MAKE IT SO VOID FUNCTIONS CANNOT BE RETURNED
+            returned_val = self.__call_func(expr_ast)
+            if returned_val.type() == Type.VOID:
+                super().error(ErrorType.TYPE_ERROR, f"Void function cannot be assigned to anything and evaluated")
+            return returned_val
         if expr_ast.elem_type in Interpreter.BIN_OPS:
             return self.__eval_op(expr_ast)
         if expr_ast.elem_type == Interpreter.NEG_NODE:
