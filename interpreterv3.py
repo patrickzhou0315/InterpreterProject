@@ -24,8 +24,8 @@ class Interpreter(InterpreterBase):
     def __init__(self, console_output=True, inp=None, trace_output=False):
         super().__init__(console_output, inp)
         self.trace_output = trace_output
-        self.__setup_ops()
         self.structs = {}
+        self.__setup_ops()
 
     # run a program that's provided in a string
     # usese the provided Parser found in brewparse.py to parse the program
@@ -33,6 +33,7 @@ class Interpreter(InterpreterBase):
     def run(self, program):
         ast = parse_program(program)
         self.__parse_structs(ast)
+        self.__setup_struct_ops()
         self.__set_up_function_table(ast)
         self.env = EnvironmentManager()
         self.__call_func_aux("main", [])
@@ -133,9 +134,7 @@ class Interpreter(InterpreterBase):
 
         for formal_ast, actual_ast in zip(formal_args, actual_args):
             formal_arg_type = formal_ast.get("var_type")
-            actual_arg_type = actual_ast.get("var_type")
             result = self.__eval_expr(actual_ast)
-            result = self.__coerce_value(actual_arg_type, result)
             result = self.__coerce_value(formal_arg_type, result)
 
             # if the thing being passed through isn't a struct
@@ -279,7 +278,7 @@ class Interpreter(InterpreterBase):
                 final_field = struct_var[-1]
                 if final_field not in current.value().keys():
                     super().error(ErrorType.NAME_ERROR, f"Field {field_name} does not exist in {root_var_name}")
-                return current.value().get(final_field).value()
+                return current.value().get(final_field)
             else:
                 val = self.env.get(var_name)
                 if val is None:
@@ -320,7 +319,7 @@ class Interpreter(InterpreterBase):
         elif var_type == Type.STRING:
             return Value(Type.STRING, "")
         elif var_type in self.structs:
-            return Value(Type.NIL, None)
+            return Value(var_type, None)
         else:
             super().error(ErrorType.TYPE_ERROR,
             f"Invalid type: {var_type}")
@@ -333,15 +332,15 @@ class Interpreter(InterpreterBase):
         if not self.__compatible_types(
             arith_ast.elem_type, left_value_obj, right_value_obj
         ):
-            if left_value_obj.type() == Type.BOOL and right_value_obj.type() == Type.INT():
-                right_value_obj = self.__coerce_value(left_value_obj.type(), right_value_obj)
-            elif left_value_obj.type() == Type.INT and right_value_obj.type() == Type.BOOL():
-                left_value_obj = self.__coerce_value(right_value_obj.type(), left_value_obj)
-            else:
                 super().error(
                     ErrorType.TYPE_ERROR,
                     f"Incompatible types for {arith_ast.elem_type} operation",
                 )
+        if left_value_obj.type() == Type.BOOL and right_value_obj.type() == Type.INT():
+            right_value_obj = self.__coerce_value(left_value_obj.type(), right_value_obj)
+        elif left_value_obj.type() == Type.INT and right_value_obj.type() == Type.BOOL():
+            left_value_obj = self.__coerce_value(right_value_obj.type(), left_value_obj)
+
         if arith_ast.elem_type not in self.op_to_lambda[left_value_obj.type()]:
             super().error(
                 ErrorType.TYPE_ERROR,
@@ -435,6 +434,17 @@ class Interpreter(InterpreterBase):
         self.op_to_lambda[Type.NIL]["!="] = lambda x, y: Value(
             Type.BOOL, x.type() != y.type() or x.value() != y.value()
         )
+    
+    def __setup_struct_ops(self):
+        # set up operations on structs
+        for struct_name in self.structs.keys():
+            self.op_to_lambda[struct_name] = {}
+            self.op_to_lambda[struct_name]['=='] = lambda x, y: Value(
+                Type.BOOL, x.value() == y.value()
+            )
+            self.op_to_lambda[struct_name]['!='] = lambda x, y: Value(
+                Type.BOOL, x.value() != y.value()
+            )
 
     def __do_if(self, if_ast):
         cond_ast = if_ast.get("condition")
