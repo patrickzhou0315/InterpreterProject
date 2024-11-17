@@ -18,7 +18,7 @@ class Interpreter(InterpreterBase):
     NIL_VALUE = create_value(InterpreterBase.NIL_DEF)
     TRUE_VALUE = create_value(InterpreterBase.TRUE_DEF)
     BIN_OPS = {"+", "-", "*", "/", "==", "!=", ">", ">=", "<", "<=", "||", "&&"}
-    PRIMITIVES = [Type.INT, Type.BOOL, Type.STRING]
+    PRIMITIVES = [Type.INT, Type.BOOL, Type.STRING, Type.NIL]
 
     # methods
     def __init__(self, console_output=True, inp=None, trace_output=False):
@@ -64,6 +64,21 @@ class Interpreter(InterpreterBase):
         for func_def in ast.get("functions"):
             func_name = func_def.get("name")
             num_params = len(func_def.get("args"))
+            # check if arguments have valid types
+            for arg in func_def.get("args"):
+                arg_type = arg.get("var_type")
+                if arg_type not in self.structs and arg_type not in self.PRIMITIVES:
+                    super().error(
+                        ErrorType.TYPE_ERROR,
+                        f"invalid argument type {arg_type}"
+                    )
+            # check if the return value is a valid type
+            return_type = func_def.get("return_type")
+            if return_type not in self.structs and return_type not in self.PRIMITIVES:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"invalid return type {return_type}"
+                )
             if func_name not in self.func_name_to_ast:
                 self.func_name_to_ast[func_name] = {}
             self.func_name_to_ast[func_name][num_params] = func_def
@@ -120,7 +135,6 @@ class Interpreter(InterpreterBase):
             return self.__call_print(actual_args)
         if func_name == "inputi" or func_name == "inputs":
             return self.__call_input(func_name, actual_args)
-
         func_ast = self.__get_func_by_name(func_name, len(actual_args))
         formal_args = func_ast.get("args")
         if len(actual_args) != len(formal_args):
@@ -174,24 +188,27 @@ class Interpreter(InterpreterBase):
                 return Value(Type.BOOL, False)
             return Value(Type.BOOL, True)
         if coercer_type != coercee.type():
-            super().error(
-                ErrorType.TYPE_ERROR,
-                f"Cannot coerce type {coercee.type} into {coercer_type}"
-            )
+            if coercer_type in self.structs and coercee.type() == Type.NIL:
+                return Value(Type.NIL, None)
+            else:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Cannot coerce type {coercee.type} into {coercer_type}"
+                )
         return coercee
 
     def __call_print(self, args):
         output = ""
         for arg in args:
             result = self.__eval_expr(arg)  # result is a Value object
-            output = output + get_printable(result)
+            output = output + get_printable(result, self.structs)
         super().output(output)
         return Interpreter.NIL_VALUE
 
     def __call_input(self, name, args):
         if args is not None and len(args) == 1:
             result = self.__eval_expr(args[0])
-            super().output(get_printable(result))
+            super().output(get_printable(result, self.structs))
         elif args is not None and len(args) > 1:
             super().error(
                 ErrorType.NAME_ERROR, "No inputi() function that takes > 1 parameter"
@@ -209,6 +226,10 @@ class Interpreter(InterpreterBase):
             struct_var = var_name.split('.')
             root_var_name = struct_var[0]
             struct = self.env.get(root_var_name)
+            if struct.type() not in self.structs:
+                    super().error(
+                        ErrorType.TYPE_ERROR, f"Undefined dot operator access {root_var_name}"
+                    )
             if struct is None:
                 super().error(
                     ErrorType.NAME_ERROR, f"Undefined struct variable {root_var_name}"
@@ -225,8 +246,10 @@ class Interpreter(InterpreterBase):
                         ErrorType.NAME_ERROR, f"field {field_name} is undefined"
                     )
             final_field = struct_var[-1]
+            if current.value() is None:
+                super().error(ErrorType.FAULT_ERROR, f"Object {root_var_name} has not been initialized yet")
             if final_field not in current.value().keys():
-                super().error(ErrorType.NAME_ERROR, f"Field {field_name} does not exist in {root_var_name}")
+                super().error(ErrorType.NAME_ERROR, f"Field {final_field} does not exist in {root_var_name}")
             assigned_value = self.__coerce_value(current.value().get(final_field).type(), value_obj)
             current.value()[final_field] = assigned_value
 
@@ -260,6 +283,10 @@ class Interpreter(InterpreterBase):
                 struct_var = var_name.split('.')
                 root_var_name = struct_var[0]
                 struct = self.env.get(root_var_name)
+                if struct.type() not in self.structs:
+                    super().error(
+                        ErrorType.TYPE_ERROR, f"Undefined dot operator access {root_var_name}"
+                    )
                 if struct is None:
                     super().error(
                         ErrorType.NAME_ERROR, f"Undefined struct variable {root_var_name}"
@@ -276,8 +303,10 @@ class Interpreter(InterpreterBase):
                             ErrorType.NAME_ERROR, f"field {field_name} is undefined"
                         )
                 final_field = struct_var[-1]
+                if current.value() is None:
+                    super().error(ErrorType.FAULT_ERROR, f"Object {root_var_name} has not been initialized yet")
                 if final_field not in current.value().keys():
-                    super().error(ErrorType.NAME_ERROR, f"Field {field_name} does not exist in {root_var_name}")
+                    super().error(ErrorType.NAME_ERROR, f"Field {final_field} does not exist in {root_var_name}")
                 return current.value().get(final_field)
             else:
                 val = self.env.get(var_name)
@@ -327,18 +356,23 @@ class Interpreter(InterpreterBase):
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
         right_value_obj = self.__eval_expr(arith_ast.get("op2"))
-
         # probably add coercion of ints to bools and bools to ints somewhere here
+
         if not self.__compatible_types(
             arith_ast.elem_type, left_value_obj, right_value_obj
         ):
+            if left_value_obj.type() == Type.BOOL and right_value_obj.type() == Type.INT:
+                right_value_obj = self.__coerce_value(left_value_obj.type(), right_value_obj)
+            elif left_value_obj.type() == Type.INT and right_value_obj.type() == Type.BOOL:
+                left_value_obj = self.__coerce_value(right_value_obj.type(), left_value_obj)
+            else:
                 super().error(
                     ErrorType.TYPE_ERROR,
                     f"Incompatible types for {arith_ast.elem_type} operation",
                 )
-        if left_value_obj.type() == Type.BOOL and right_value_obj.type() == Type.INT():
+        if left_value_obj.type() == Type.BOOL and right_value_obj.type() == Type.INT:
             right_value_obj = self.__coerce_value(left_value_obj.type(), right_value_obj)
-        elif left_value_obj.type() == Type.INT and right_value_obj.type() == Type.BOOL():
+        if left_value_obj.type() == Type.INT and right_value_obj.type() == Type.BOOL:
             left_value_obj = self.__coerce_value(right_value_obj.type(), left_value_obj)
 
         if arith_ast.elem_type not in self.op_to_lambda[left_value_obj.type()]:
@@ -358,12 +392,12 @@ class Interpreter(InterpreterBase):
     def __eval_unary(self, arith_ast, t, f):
         value_obj = self.__eval_expr(arith_ast.get("op1"))
         if value_obj.type() != t:
-            # value_obj = self.__coerce_value(t, value_obj)
-            # if value_obj.type() != Type.BOOL:
-            super().error(
-                ErrorType.TYPE_ERROR,
-                f"Incompatible type for {arith_ast.elem_type} operation",
-            )
+            value_obj = self.__coerce_value(t, value_obj)
+            if value_obj.type() != t:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Incompatible type for {arith_ast.elem_type} operation",
+                )
         return Value(t, f(value_obj.value()))
 
     def __setup_ops(self):
@@ -400,6 +434,13 @@ class Interpreter(InterpreterBase):
         self.op_to_lambda[Type.INT][">="] = lambda x, y: Value(
             Type.BOOL, x.value() >= y.value()
         )
+        self.op_to_lambda[Type.INT]['&&'] = lambda x, y: Value(
+            Type.BOOL, x.value() and y.value()
+        )
+        self.op_to_lambda[Type.INT]['||'] = lambda x, y: Value(
+            Type.BOOL, x.value() or y.value()
+        )
+
         #  set up operations on strings
         self.op_to_lambda[Type.STRING] = {}
         self.op_to_lambda[Type.STRING]["+"] = lambda x, y: Value(
@@ -489,12 +530,12 @@ class Interpreter(InterpreterBase):
         expr_ast = return_ast.get("expression")
         if expr_ast is None:
             return (ExecStatus.RETURN, Interpreter.NIL_VALUE)
-        value = self.__eval_expr(expr_ast)
-        if value.type() not in self.structs:
-            if value.type() not in self.PRIMITIVES:
+        value_obj = self.__eval_expr(expr_ast)
+        if value_obj.type() not in self.structs:
+            if value_obj.type() not in self.PRIMITIVES:
                 super().error(
                     ErrorType.TYPE_ERROR,
-                    f"Invalid Type returned {value.type()}"
+                    f"Invalid Type returned {value_obj.type()}"
                 )
             value_obj = copy.copy(self.__eval_expr(expr_ast))
         return (ExecStatus.RETURN, value_obj)
