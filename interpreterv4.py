@@ -12,6 +12,7 @@ from type_valuev4 import Type, Value, create_value, get_printable
 class ExecStatus(Enum):
     CONTINUE = 1
     RETURN = 2
+    EXCEPTION = 3
 
 
 # Main interpreter class
@@ -65,6 +66,11 @@ class Interpreter(InterpreterBase):
             if status == ExecStatus.RETURN:
                 self.env.pop_block()
                 return (status, return_val)
+            
+            # check if the status is an exception
+            if status == ExecStatus.EXCEPTION:
+                self.env.pop_block()
+                return (status, return_val)
 
         self.env.pop_block()
         return (ExecStatus.CONTINUE, Interpreter.NIL_VALUE)
@@ -84,7 +90,21 @@ class Interpreter(InterpreterBase):
             status, return_val = self.__do_if(statement)
         elif statement.elem_type == Interpreter.FOR_NODE:
             status, return_val = self.__do_for(statement)
+        elif statement.elem_type == Interpreter.RAISE_NODE:
+            status, return_val = self.__do_raise(statement)
+            # would assign status as ExecStatus.EXCEPTION and return_val as the evaluated expression type
+        elif statement.elem_type == Interpreter.TRY_NODE:
+            status, return_val = self.__try_block(statement)
 
+        return (status, return_val)
+    
+    def __try_block(self, try_node):
+        status, return_val = self.__run_statements(try_node.get("statements"))
+        if status == ExecStatus.EXCEPTION:
+            for catcher in try_node.get("catchers"):
+                if return_val == catcher.get("exception_type"):
+                    status, return_val = self.__run_statements(catcher.get("statements"))
+                    return (status, return_val)
         return (status, return_val)
     
     def __call_func(self, call_node):
@@ -185,6 +205,28 @@ class Interpreter(InterpreterBase):
 
     def __eval_op(self, arith_ast):
         left_value_obj = self.__eval_expr(arith_ast.get("op1"))
+        # Short Circuiting
+
+        # first evaluated left object and makes sure it's a type of bool
+        if (left_value_obj.type() != Type.BOOL):
+            super().error(
+                ErrorType.TYPE_ERROR,
+                f"Incompatible left type for {arith_ast.elem_type} operation",
+            )
+
+        # checking the expression type
+
+        # if it's &&, check if left value is False, just return False
+        if (arith_ast.elem_type == "&&"):
+            if left_value_obj.value() == False:
+                return Value(Type.BOOL, False)
+
+        # if it's ||, check if left value is True, just return True
+        if (arith_ast.elem_type == "||"):
+            if left_value_obj.value() == True:
+                return Value(Type.BOOL, True)
+
+        # if none of the short circuits worked, evaluate the right value object
         right_value_obj = self.__eval_expr(arith_ast.get("op2"))
         if not self.__compatible_types(
             arith_ast.elem_type, left_value_obj, right_value_obj
@@ -334,3 +376,15 @@ class Interpreter(InterpreterBase):
             return (ExecStatus.RETURN, Interpreter.NIL_VALUE)
         value_obj = copy.copy(self.__eval_expr(expr_ast))
         return (ExecStatus.RETURN, value_obj)
+    
+    def __do_raise(self, raise_ast):
+        expr_ast = raise_ast.get("exception_type")
+        if expr_ast is None:
+            return (ExecStatus.EXCEPTION, Interpreter.NIL_VALUE)
+        value_obj = copy.copy(self.__eval_expr(expr_ast))
+        if value_obj.type() != Type.STRING:
+            super().error(
+                ErrorType.TYPE_ERROR,
+                "incompatible type for raise statement",
+            )
+        return (ExecStatus.EXCEPTION, value_obj)
