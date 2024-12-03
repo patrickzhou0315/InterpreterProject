@@ -35,7 +35,12 @@ class Interpreter(InterpreterBase):
         ast = parse_program(program)
         self.__set_up_function_table(ast)
         self.env = EnvironmentManager()
-        self.__call_func_aux("main", [])
+        exception_status, exception_value = self.__call_func_aux("main", [])
+        if (exception_status == ExecStatus.EXCEPTION):
+            super().error(
+                ErrorType.FAULT_ERROR,
+                f"Exception {exception_value.value()} thrown but not handled",
+            )
 
     def __set_up_function_table(self, ast):
         self.func_name_to_ast = {}
@@ -63,12 +68,8 @@ class Interpreter(InterpreterBase):
             if self.trace_output:
                 print(statement)
             status, return_val = self.__run_statement(statement)
-            if status == ExecStatus.RETURN:
-                self.env.pop_block()
-                return (status, return_val)
-            
-            # check if the status is an exception
-            if status == ExecStatus.EXCEPTION:
+            # if the status is either RETURN or EXCEPTION, then we return that
+            if status == ExecStatus.RETURN or status == ExecStatus.EXCEPTION:
                 self.env.pop_block()
                 return (status, return_val)
 
@@ -79,9 +80,10 @@ class Interpreter(InterpreterBase):
         status = ExecStatus.CONTINUE
         return_val = None
         if statement.elem_type == InterpreterBase.FCALL_NODE:
-            self.__call_func(statement)
+            # unsure if i should return this here
+            status, return_val = self.__call_func(statement)
         elif statement.elem_type == "=":
-            self.__assign(statement)
+            status, return_val = self.__assign(statement)
         elif statement.elem_type == InterpreterBase.VAR_DEF_NODE:
             self.__var_def(statement)
         elif statement.elem_type == InterpreterBase.RETURN_NODE:
@@ -92,20 +94,43 @@ class Interpreter(InterpreterBase):
             status, return_val = self.__do_for(statement)
         elif statement.elem_type == Interpreter.RAISE_NODE:
             status, return_val = self.__do_raise(statement)
-            # would assign status as ExecStatus.EXCEPTION and return_val as the evaluated expression type
         elif statement.elem_type == Interpreter.TRY_NODE:
             status, return_val = self.__try_block(statement)
-
         return (status, return_val)
     
     def __try_block(self, try_node):
+        # going through a try block
         status, return_val = self.__run_statements(try_node.get("statements"))
+        # if the status is exception, look through current list of catchers
         if status == ExecStatus.EXCEPTION:
             for catcher in try_node.get("catchers"):
-                if return_val == catcher.get("exception_type"):
+                # if the string value of the exception is the same as one of the catchers, do it
+                if return_val.value() == catcher.get("exception_type"):
                     status, return_val = self.__run_statements(catcher.get("statements"))
-                    return (status, return_val)
-        return (status, return_val)
+                    return (status,return_val)
+            # if all the catchers have been gone through, but it still hasn't been found, just propagate the exception upward by returning
+            return (status, return_val)
+        # if the status is not an exception, just return that status instead, it is either a continue or a return
+        else:
+            return (status, return_val)
+    
+    def __do_raise(self, raise_ast):
+        expr_ast = raise_ast.get("exception_type")
+
+        # if the exception raised has no string in it, then we return an exception type with a nil value
+        if expr_ast is None:
+            return (ExecStatus.EXCEPTION, Interpreter.NIL_VALUE)
+        # otherwise we evaluate the expression
+        _, value_obj = copy.copy(self.__eval_expr(expr_ast))
+        # make sure that it's a string for the evaluation
+        if value_obj.type() != Type.STRING:
+            super().error(
+                ErrorType.TYPE_ERROR,
+                "incompatible type for raise statement",
+            )
+
+        # return that we've hit an exception
+        return (ExecStatus.EXCEPTION, value_obj)
     
     def __call_func(self, call_node):
         func_name = call_node.get("name")
@@ -129,7 +154,9 @@ class Interpreter(InterpreterBase):
         # first evaluate all of the actual parameters and associate them with the formal parameter names
         args = {}
         for formal_ast, actual_ast in zip(formal_args, actual_args):
-            result = copy.copy(self.__eval_expr(actual_ast))
+            exception_status, result = copy.copy(self.__eval_expr(actual_ast))
+            if (exception_status == ExecStatus.EXCEPTION):
+                return (exception_status, result)
             arg_name = formal_ast.get("name")
             args[arg_name] = result
 
@@ -138,21 +165,29 @@ class Interpreter(InterpreterBase):
         # and add the formal arguments to the activation record
         for arg_name, value in args.items():
           self.env.create(arg_name, value)
-        _, return_val = self.__run_statements(func_ast.get("statements"))
+
+        # the return value of the function
+        # now can either continue to return an exception or actually return a value
+        exception_status, return_val = self.__run_statements(func_ast.get("statements"))
+        # if an exception wasn't handled inside the thing and it propagated upwards, we return the exception to be handled
         self.env.pop_func()
-        return return_val
+        return (exception_status, return_val)
 
     def __call_print(self, args):
         output = ""
         for arg in args:
-            result = self.__eval_expr(arg)  # result is a Value object
+            exception_status, result = self.__eval_expr(arg)  # result is a Value object
+            if (exception_status == ExecStatus.EXCEPTION):
+                return (ExecStatus.EXCEPTION, result)
             output = output + get_printable(result)
         super().output(output)
-        return Interpreter.NIL_VALUE
+        return (ExecStatus.CONTINUE, Interpreter.NIL_VALUE)
 
     def __call_input(self, name, args):
         if args is not None and len(args) == 1:
-            result = self.__eval_expr(args[0])
+            exception_status, result = self.__eval_expr(args[0])
+            if (exception_status == ExecStatus.EXCEPTION):
+                return (ExecStatus.EXCEPTION, result)
             super().output(get_printable(result))
         elif args is not None and len(args) > 1:
             super().error(
@@ -160,17 +195,20 @@ class Interpreter(InterpreterBase):
             )
         inp = super().get_input()
         if name == "inputi":
-            return Value(Type.INT, int(inp))
+            return (ExecStatus.CONTINUE, Value(Type.INT, int(inp)))
         if name == "inputs":
-            return Value(Type.STRING, inp)
+            return (ExecStatus.CONTINUE, Value(Type.STRING, inp))
 
     def __assign(self, assign_ast):
         var_name = assign_ast.get("name")
-        value_obj = self.__eval_expr(assign_ast.get("expression"))
+        exception_status, value_obj = self.__eval_expr(assign_ast.get("expression"))
+        if (exception_status == ExecStatus.EXCEPTION):
+            return (ExecStatus.EXCEPTION, value_obj)
         if not self.env.set(var_name, value_obj):
             super().error(
                 ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
             )
+        return (ExecStatus.CONTINUE, Value(Type.BOOL, True))
     
     def __var_def(self, var_ast):
         var_name = var_ast.get("name")
@@ -181,21 +219,22 @@ class Interpreter(InterpreterBase):
 
     def __eval_expr(self, expr_ast):
         if expr_ast.elem_type == InterpreterBase.NIL_NODE:
-            return Interpreter.NIL_VALUE
+            return ExecStatus.CONTINUE, Interpreter.NIL_VALUE
         if expr_ast.elem_type == InterpreterBase.INT_NODE:
-            return Value(Type.INT, expr_ast.get("val"))
+            return ExecStatus.CONTINUE, Value(Type.INT, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.STRING_NODE:
-            return Value(Type.STRING, expr_ast.get("val"))
+            return ExecStatus.CONTINUE, Value(Type.STRING, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.BOOL_NODE:
-            return Value(Type.BOOL, expr_ast.get("val"))
+            return ExecStatus.CONTINUE, Value(Type.BOOL, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.VAR_NODE:
             var_name = expr_ast.get("name")
             val = self.env.get(var_name)
             if val is None:
                 super().error(ErrorType.NAME_ERROR, f"Variable {var_name} not found")
-            return val
+            return ExecStatus.CONTINUE, val
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
-            return self.__call_func(expr_ast)
+            exception_status, return_val = self.__call_func(expr_ast)
+            return exception_status, return_val
         if expr_ast.elem_type in Interpreter.BIN_OPS:
             return self.__eval_op(expr_ast)
         if expr_ast.elem_type == Interpreter.NEG_NODE:
@@ -204,30 +243,43 @@ class Interpreter(InterpreterBase):
             return self.__eval_unary(expr_ast, Type.BOOL, lambda x: not x)
 
     def __eval_op(self, arith_ast):
-        left_value_obj = self.__eval_expr(arith_ast.get("op1"))
-        # Short Circuiting
+        left_exception_status, left_value_obj = self.__eval_expr(arith_ast.get("op1"))
+        # check the exception statsus
+        if (left_exception_status == ExecStatus.EXCEPTION):
+            return (ExecStatus.EXCEPTION, left_value_obj)
 
-        # first evaluated left object and makes sure it's a type of bool
-        if (left_value_obj.type() != Type.BOOL):
-            super().error(
-                ErrorType.TYPE_ERROR,
-                f"Incompatible left type for {arith_ast.elem_type} operation",
-            )
+
+        # Short Circuiting
 
         # checking the expression type
 
         # if it's &&, check if left value is False, just return False
         if (arith_ast.elem_type == "&&"):
+            if (left_value_obj.type() != Type.BOOL):
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Incompatible left type for {arith_ast.elem_type} operation",
+                )
             if left_value_obj.value() == False:
-                return Value(Type.BOOL, False)
+                return ExecStatus.CONTINUE, Value(Type.BOOL, False)
 
         # if it's ||, check if left value is True, just return True
         if (arith_ast.elem_type == "||"):
+            if (left_value_obj.type() != Type.BOOL):
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"Incompatible left type for {arith_ast.elem_type} operation",
+                )
             if left_value_obj.value() == True:
-                return Value(Type.BOOL, True)
+                return ExecStatus.CONTINUE, Value(Type.BOOL, True)
 
         # if none of the short circuits worked, evaluate the right value object
-        right_value_obj = self.__eval_expr(arith_ast.get("op2"))
+        right_exception_status, right_value_obj = self.__eval_expr(arith_ast.get("op2"))
+
+        # check exception status
+        if (right_exception_status == ExecStatus.EXCEPTION):
+            return (ExecStatus.EXCEPTION, right_value_obj)
+
         if not self.__compatible_types(
             arith_ast.elem_type, left_value_obj, right_value_obj
         ):
@@ -241,7 +293,9 @@ class Interpreter(InterpreterBase):
                 f"Incompatible operator {arith_ast.elem_type} for type {left_value_obj.type()}",
             )
         f = self.op_to_lambda[left_value_obj.type()][arith_ast.elem_type]
-        return f(left_value_obj, right_value_obj)
+        if (arith_ast.elem_type == "/" and right_value_obj.type() == Type.INT and right_value_obj.value() == 0):
+            return ExecStatus.EXCEPTION, Value(Type.STRING, "div0")
+        return ExecStatus.CONTINUE, f(left_value_obj, right_value_obj)
 
     def __compatible_types(self, oper, obj1, obj2):
         # DOCUMENT: allow comparisons ==/!= of anything against anything
@@ -250,13 +304,16 @@ class Interpreter(InterpreterBase):
         return obj1.type() == obj2.type()
 
     def __eval_unary(self, arith_ast, t, f):
-        value_obj = self.__eval_expr(arith_ast.get("op1"))
+        exception_status, value_obj = self.__eval_expr(arith_ast.get("op1"))
+        if (exception_status == ExecStatus.EXCEPTION):
+            return (ExecStatus.EXCEPTION, value_obj)
+
         if value_obj.type() != t:
             super().error(
                 ErrorType.TYPE_ERROR,
                 f"Incompatible type for {arith_ast.elem_type} operation",
             )
-        return Value(t, f(value_obj.value()))
+        return ExecStatus.CONTINUE, Value(t, f(value_obj.value()))
 
     def __setup_ops(self):
         self.op_to_lambda = {}
@@ -329,7 +386,9 @@ class Interpreter(InterpreterBase):
 
     def __do_if(self, if_ast):
         cond_ast = if_ast.get("condition")
-        result = self.__eval_expr(cond_ast)
+        exception_status, result = self.__eval_expr(cond_ast)
+        if exception_status == ExecStatus.EXCEPTION:
+            return (ExecStatus.EXCEPTION, result)
         if result.type() != Type.BOOL:
             super().error(
                 ErrorType.TYPE_ERROR,
@@ -352,10 +411,14 @@ class Interpreter(InterpreterBase):
         cond_ast = for_ast.get("condition")
         update_ast = for_ast.get("update") 
 
-        self.__run_statement(init_ast)  # initialize counter variable
+        exception_status, return_value = self.__run_statement(init_ast)  # initialize counter variable
+        if (exception_status == ExecStatus.EXCEPTION):
+            return (ExecStatus.EXCEPTION, return_value)
         run_for = Interpreter.TRUE_VALUE
         while run_for.value():
-            run_for = self.__eval_expr(cond_ast)  # check for-loop condition
+            exception_status, run_for = self.__eval_expr(cond_ast)  # check for-loop condition
+            if (exception_status == ExecStatus.EXCEPTION):
+                return (ExecStatus.EXCEPTION, run_for)
             if run_for.type() != Type.BOOL:
                 super().error(
                     ErrorType.TYPE_ERROR,
@@ -364,9 +427,13 @@ class Interpreter(InterpreterBase):
             if run_for.value():
                 statements = for_ast.get("statements")
                 status, return_val = self.__run_statements(statements)
+                if status == ExecStatus.EXCEPTION:
+                    return status, return_val
                 if status == ExecStatus.RETURN:
                     return status, return_val
-                self.__run_statement(update_ast)  # update counter variable
+                status, return_val = self.__run_statement(update_ast)  # update counter variable
+                if status == ExecStatus.EXCEPTION:
+                    return status, return_val
 
         return (ExecStatus.CONTINUE, Interpreter.NIL_VALUE)
 
@@ -374,17 +441,8 @@ class Interpreter(InterpreterBase):
         expr_ast = return_ast.get("expression")
         if expr_ast is None:
             return (ExecStatus.RETURN, Interpreter.NIL_VALUE)
-        value_obj = copy.copy(self.__eval_expr(expr_ast))
+        exception_status, returned_value = self.__eval_expr(expr_ast)
+        if (exception_status == ExecStatus.EXCEPTION):
+            return (ExecStatus.EXCEPTION, returned_value)
+        value_obj = copy.copy(returned_value)
         return (ExecStatus.RETURN, value_obj)
-    
-    def __do_raise(self, raise_ast):
-        expr_ast = raise_ast.get("exception_type")
-        if expr_ast is None:
-            return (ExecStatus.EXCEPTION, Interpreter.NIL_VALUE)
-        value_obj = copy.copy(self.__eval_expr(expr_ast))
-        if value_obj.type() != Type.STRING:
-            super().error(
-                ErrorType.TYPE_ERROR,
-                "incompatible type for raise statement",
-            )
-        return (ExecStatus.EXCEPTION, value_obj)
