@@ -7,7 +7,8 @@ from brewparse import parse_program
 from env_v4 import EnvironmentManager
 from intbase import InterpreterBase, ErrorType
 from type_valuev4 import Type, Value, create_value, get_printable
-from lazy_valv4 import LazyVal
+from lazy_val import LazyExpr
+from element import Element
 
 class ExecStatus(Enum):
     CONTINUE = 1
@@ -149,7 +150,6 @@ class Interpreter(InterpreterBase):
             return self.__call_print(actual_args)
         if func_name == "inputi" or func_name == "inputs":
             return self.__call_input(func_name, actual_args)
-
         func_ast = self.__get_func_by_name(func_name, len(actual_args))
         formal_args = func_ast.get("args")
         if len(actual_args) != len(formal_args):
@@ -161,9 +161,10 @@ class Interpreter(InterpreterBase):
         # first evaluate all of the actual parameters and associate them with the formal parameter names
         args = {}
         for formal_ast, actual_ast in zip(formal_args, actual_args):
-            exception_status, result = copy.copy(self.__eval_expr(actual_ast))
-            if (exception_status == ExecStatus.EXCEPTION):
-                return (exception_status, result)
+            # exception_status, 
+            result = copy.copy(self.__make_lazy_expr(actual_ast))
+            # if (exception_status == ExecStatus.EXCEPTION):
+            #     return (exception_status, result)
             arg_name = formal_ast.get("name")
             args[arg_name] = result
 
@@ -185,7 +186,8 @@ class Interpreter(InterpreterBase):
     def __call_print(self, args):
         output = ""
         for arg in args:
-            exception_status, result = self.__eval_expr(arg)  # result is a Value object
+            res = self.__make_lazy_expr(arg)
+            exception_status, result = self.__eval_lazy_expr(res)  # result is a Value object
             if (exception_status == ExecStatus.EXCEPTION):
                 return (ExecStatus.EXCEPTION, result)
             output = output + get_printable(result)
@@ -194,7 +196,7 @@ class Interpreter(InterpreterBase):
 
     def __call_input(self, name, args):
         if args is not None and len(args) == 1:
-            exception_status, result = self.__eval_expr(args[0])
+            exception_status, result = self.__eval_lazy_expr(args[0])
             if (exception_status == ExecStatus.EXCEPTION):
                 return (ExecStatus.EXCEPTION, result)
             super().output(get_printable(result))
@@ -210,9 +212,10 @@ class Interpreter(InterpreterBase):
 
     def __assign(self, assign_ast):
         var_name = assign_ast.get("name")
-        exception_status, value_obj = self.__eval_expr(assign_ast.get("expression"))
-        if (exception_status == ExecStatus.EXCEPTION):
-            return (ExecStatus.EXCEPTION, value_obj)
+        # exception_status, 
+        value_obj = self.__make_lazy_expr(assign_ast.get("expression"))
+        # if (exception_status == ExecStatus.EXCEPTION):
+        #     return (ExecStatus.EXCEPTION, value_obj)
         if not self.env.set(var_name, value_obj):
             super().error(
                 ErrorType.NAME_ERROR, f"Undefined variable {var_name} in assignment"
@@ -221,12 +224,98 @@ class Interpreter(InterpreterBase):
     
     def __var_def(self, var_ast):
         var_name = var_ast.get("name")
-        if not self.env.create(var_name, Interpreter.NIL_VALUE):
+
+        # probably an issue here, since it's not associating it with a lazy value, so we're gonna change it for now
+        # if not self.env.create(var_name, Interpreter.NIL_VALUE):
+        if not self.env.create(var_name, self.__make_lazy_expr(var_ast)):
             super().error(
                 ErrorType.NAME_ERROR, f"Duplicate definition for variable {var_name}"
             )
 
+    def __make_lazy_expr(self, expression):
+        # if it's already a lazy expression, just return it
+        if isinstance(expression, LazyExpr):
+            return expression
+        # if it's a Value, just convert it into a lazy expression, but fill in the value marker as already resolved
+        if not isinstance(expression, Element):
+            assert(isinstance(expression, Value))
+            return LazyExpr(value=expression)
+        
+        # for the rest of these instances, it must be an element object, so we make a new node
+
+        # first is the Value Node
+        if (expression.elem_type in {Interpreter.STRING_NODE, Interpreter.INT_NODE, Interpreter.BOOL_NODE, Interpreter.NIL_NODE}):
+            if (expression.elem_type is Interpreter.BOOL_NODE):
+                return LazyExpr(value=Value(Type.BOOL, expression.get("val")))
+            elif (expression.elem_type is Interpreter.NIL_NODE):
+                return LazyExpr(value=self.NIL_VALUE)
+            elif (expression.elem_type is Interpreter.STRING_NODE):
+                return LazyExpr(value=Value(Type.STRING, expression.get("val")))
+            elif (expression.elem_type is Interpreter.INT_NODE):
+                return LazyExpr(value=Value(Type.INT, expression.get("val")))
+            else:
+                super().error(
+                    ErrorType.TYPE_ERROR,
+                    f"How tf did you get in here"
+                )
+        # has to be equal to a variable (stored as lazy expression), function (stored as lazy expression), or Expression with binops
+        
+        #making the dict
+        new_node_dict = {}
+        if (expression.get("op1") is not None):
+            new_node_dict["op1"] = self.__make_lazy_expr(expression.get("op1"))
+        if (expression.get("op2") is not None):
+            new_node_dict["op2"] = self.__make_lazy_expr(expression.get("op2"))
+
+        # all vars should be associated with a lazy expression, or not exist
+        if (expression.elem_type is Interpreter.VAR_NODE):
+            name = expression.get("name")
+            # if the var exists
+            if (self.env.get(name) is not None):
+                return self.env.get(name)
+            # if it doesn't exist, mark it so we can error out later
+            return LazyExpr(unknown_var=name)
+        
+        # doesn't actually call the function
+        if (expression.elem_type is Interpreter.FCALL_NODE):
+            # set the function name
+            new_node_dict["name"] = expression.get("name")
+            # set the args that it was called with
+            # make each arg its own lazy expression
+            new_func_args = []
+            for arg in expression.get("args"):
+                new_func_args.append(self.__make_lazy_expr(arg))
+            new_node_dict["args"] = new_func_args
+
+        # we have the parts of the element now, so we have it's ast, store it under a new lazy node and make it the ast
+        return LazyExpr(expr_ast=Element(expression.elem_type, **new_node_dict))
+
+    def __eval_lazy_expr(self, expression: LazyExpr):
+        # 3 different cases, either has unknown var so crash, has a value, so just return the value, or has an expression tree that needs to be evaluated
+        # handling unknown var
+        if expression.unknown_var() is not None:
+            super().error(
+                ErrorType.NAME_ERROR, f"undefined variable {expression.unknown_var}"
+            )
+        # already been evaluated, returning a VALUE TYPE, probably add something about the execution status being CONTINUE
+        if expression.value() is not None:
+            return ExecStatus.CONTINUE, expression.value()
+        
+        # third case, handle the expression tree, also returning a VALUE type
+        if expression.expr_ast() is not None:
+            exception_status, result = self.__eval_expr(expression.expr_ast())
+            expression.v = result
+            expression.ea = None
+            return exception_status, result
+        
+        super().error(
+            ErrorType.FAULT_ERROR,
+            f"There were no fields found in the lazy expression"
+        )
+
+        
     def __eval_expr(self, expr_ast):
+        # these should be left untouched, it returns the final value if evaluated without errors
         if expr_ast.elem_type == InterpreterBase.NIL_NODE:
             return ExecStatus.CONTINUE, Interpreter.NIL_VALUE
         if expr_ast.elem_type == InterpreterBase.INT_NODE:
@@ -235,24 +324,47 @@ class Interpreter(InterpreterBase):
             return ExecStatus.CONTINUE, Value(Type.STRING, expr_ast.get("val"))
         if expr_ast.elem_type == InterpreterBase.BOOL_NODE:
             return ExecStatus.CONTINUE, Value(Type.BOOL, expr_ast.get("val"))
+        
+        # honestly not too sure if this is needed anymore
         if expr_ast.elem_type == InterpreterBase.VAR_NODE:
             var_name = expr_ast.get("name")
             val = self.env.get(var_name)
             if val is None:
                 super().error(ErrorType.NAME_ERROR, f"Variable {var_name} not found")
-            return ExecStatus.CONTINUE, val
+            # all variable should be stored as lazy values
+            assert(isinstance(val, LazyExpr))
+
+            exception_status, return_val = self.__eval_lazy_expr(val)
+            # if val.value() is not None:
+            #     return ExecStatus.CONTINUE, val.value()
+            # if val.unknown_var() is not None:
+            #     super().error(
+            #         ErrorType.NAME_ERROR,
+            #         f"variable {val.unknown_var()} is undefined"
+            #     )
+            # if val.expr_ast() is not None:
+            #     value = 
+            return ExecStatus.CONTINUE, return_val
+        
+
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
             exception_status, return_val = self.__call_func(expr_ast)
-            return exception_status, return_val
+            # return val is LazyExpression
+            _, new_return_val = self.__eval_lazy_expr(self.__make_lazy_expr(return_val))
+            return exception_status, new_return_val
+        
+
         if expr_ast.elem_type in Interpreter.BIN_OPS:
             return self.__eval_op(expr_ast)
+        
+
         if expr_ast.elem_type == Interpreter.NEG_NODE:
             return self.__eval_unary(expr_ast, Type.INT, lambda x: -1 * x)
         if expr_ast.elem_type == Interpreter.NOT_NODE:
             return self.__eval_unary(expr_ast, Type.BOOL, lambda x: not x)
 
     def __eval_op(self, arith_ast):
-        left_exception_status, left_value_obj = self.__eval_expr(arith_ast.get("op1"))
+        left_exception_status, left_value_obj = self.__eval_lazy_expr(arith_ast.get("op1"))
         # check the exception statsus
         if (left_exception_status == ExecStatus.EXCEPTION):
             return (ExecStatus.EXCEPTION, left_value_obj)
@@ -283,7 +395,7 @@ class Interpreter(InterpreterBase):
                 return ExecStatus.CONTINUE, Value(Type.BOOL, True)
 
         # if none of the short circuits worked, evaluate the right value object
-        right_exception_status, right_value_obj = self.__eval_expr(arith_ast.get("op2"))
+        right_exception_status, right_value_obj = self.__eval_lazy_expr(arith_ast.get("op2"))
 
         # check exception status
         if (right_exception_status == ExecStatus.EXCEPTION):
@@ -313,7 +425,7 @@ class Interpreter(InterpreterBase):
         return obj1.type() == obj2.type()
 
     def __eval_unary(self, arith_ast, t, f):
-        exception_status, value_obj = self.__eval_expr(arith_ast.get("op1"))
+        exception_status, value_obj = self.__eval_lazy_expr(arith_ast.get("op1"))
         if (exception_status == ExecStatus.EXCEPTION):
             return (ExecStatus.EXCEPTION, value_obj)
 
@@ -452,8 +564,9 @@ class Interpreter(InterpreterBase):
         expr_ast = return_ast.get("expression")
         if expr_ast is None:
             return (ExecStatus.RETURN, Interpreter.NIL_VALUE)
-        exception_status, returned_value = self.__eval_expr(expr_ast)
-        if (exception_status == ExecStatus.EXCEPTION):
-            return (ExecStatus.EXCEPTION, returned_value)
+        # exception_status, 
+        returned_value = self.__make_lazy_expr(expr_ast)
+        # if (exception_status == ExecStatus.EXCEPTION):
+            # return (ExecStatus.EXCEPTION, returned_value)
         value_obj = copy.copy(returned_value)
         return (ExecStatus.RETURN, value_obj)

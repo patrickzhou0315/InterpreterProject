@@ -7,6 +7,7 @@ class Type:
     BOOL = "bool"
     STRING = "string"
     NIL = "nil"
+    EXCEPTION = "exception"
 
 
 # Represents a value, which has a type and its value
