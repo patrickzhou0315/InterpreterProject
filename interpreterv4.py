@@ -71,6 +71,7 @@ class Interpreter(InterpreterBase):
             status, return_val = self.__run_statement(statement)
             # if the status is either RETURN or EXCEPTION, then we return that
             if status == ExecStatus.RETURN or status == ExecStatus.EXCEPTION:
+                print("RETURNED OR EXCEPTION")
                 self.env.pop_block()
                 return (status, return_val)
 
@@ -176,8 +177,11 @@ class Interpreter(InterpreterBase):
         # the return value of the function
         # now can either continue to return an exception or actually return a value
         exception_status, return_val = self.__run_statements(func_ast.get("statements"))
+        print(exception_status, "EXCEPTION")
         # if an exception wasn't handled inside the thing and it propagated upwards, we return the exception to be handled
         self.env.pop_func()
+        if (exception_status == ExecStatus.RETURN):
+            exception_status = ExecStatus.CONTINUE
         return (exception_status, return_val)
 
 
