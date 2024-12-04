@@ -7,7 +7,7 @@ from brewparse import parse_program
 from env_v4 import EnvironmentManager
 from intbase import InterpreterBase, ErrorType
 from type_valuev4 import Type, Value, create_value, get_printable
-
+from lazy_valv4 import LazyVal
 
 class ExecStatus(Enum):
     CONTINUE = 1
@@ -79,8 +79,10 @@ class Interpreter(InterpreterBase):
     def __run_statement(self, statement):
         status = ExecStatus.CONTINUE
         return_val = None
+
+        # print statements are eagerly evaluated
+
         if statement.elem_type == InterpreterBase.FCALL_NODE:
-            # unsure if i should return this here
             status, return_val = self.__call_func(statement)
         elif statement.elem_type == "=":
             status, return_val = self.__assign(statement)
@@ -88,12 +90,16 @@ class Interpreter(InterpreterBase):
             self.__var_def(statement)
         elif statement.elem_type == InterpreterBase.RETURN_NODE:
             status, return_val = self.__do_return(statement)
+
+        # these are eagerly evaluated
         elif statement.elem_type == Interpreter.IF_NODE:
             status, return_val = self.__do_if(statement)
         elif statement.elem_type == Interpreter.FOR_NODE:
             status, return_val = self.__do_for(statement)
         elif statement.elem_type == Interpreter.RAISE_NODE:
             status, return_val = self.__do_raise(statement)
+
+
         elif statement.elem_type == Interpreter.TRY_NODE:
             status, return_val = self.__try_block(statement)
         return (status, return_val)
@@ -114,6 +120,7 @@ class Interpreter(InterpreterBase):
         else:
             return (status, return_val)
     
+# EAGER EVALUATION HERE
     def __do_raise(self, raise_ast):
         expr_ast = raise_ast.get("exception_type")
 
@@ -173,6 +180,8 @@ class Interpreter(InterpreterBase):
         self.env.pop_func()
         return (exception_status, return_val)
 
+
+# EAGER EVALUATION HERE
     def __call_print(self, args):
         output = ""
         for arg in args:
@@ -384,6 +393,7 @@ class Interpreter(InterpreterBase):
             Type.BOOL, x.type() != y.type() or x.value() != y.value()
         )
 
+# EAGER EVALUATION HERE FOR CONDITION
     def __do_if(self, if_ast):
         cond_ast = if_ast.get("condition")
         exception_status, result = self.__eval_expr(cond_ast)
@@ -406,6 +416,7 @@ class Interpreter(InterpreterBase):
 
         return (ExecStatus.CONTINUE, Interpreter.NIL_VALUE)
 
+# EAGER EVALUATION HERE FOR CONDITION
     def __do_for(self, for_ast):
         init_ast = for_ast.get("init") 
         cond_ast = for_ast.get("condition")
