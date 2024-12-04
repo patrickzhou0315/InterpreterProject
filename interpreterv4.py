@@ -124,7 +124,6 @@ class Interpreter(InterpreterBase):
 # EAGER EVALUATION HERE
     def __do_raise(self, raise_ast):
         expr_ast = raise_ast.get("exception_type")
-
         # if the exception raised has no string in it, then we return an exception type with a nil value
         if expr_ast is None:
             return (ExecStatus.EXCEPTION, Interpreter.NIL_VALUE)
@@ -186,8 +185,7 @@ class Interpreter(InterpreterBase):
     def __call_print(self, args):
         output = ""
         for arg in args:
-            res = self.__make_lazy_expr(arg)
-            exception_status, result = self.__eval_lazy_expr(res)  # result is a Value object
+            exception_status, result = self.__eval_lazy_expr(self.__make_lazy_expr(arg))  # result is a Value object
             if (exception_status == ExecStatus.EXCEPTION):
                 return (ExecStatus.EXCEPTION, result)
             output = output + get_printable(result)
@@ -196,7 +194,7 @@ class Interpreter(InterpreterBase):
 
     def __call_input(self, name, args):
         if args is not None and len(args) == 1:
-            exception_status, result = self.__eval_lazy_expr(args[0])
+            exception_status, result = self.__eval_lazy_expr(self.__make_lazy_expr(args[0]))
             if (exception_status == ExecStatus.EXCEPTION):
                 return (ExecStatus.EXCEPTION, result)
             super().output(get_printable(result))
@@ -334,7 +332,7 @@ class Interpreter(InterpreterBase):
             # all variable should be stored as lazy values
             assert(isinstance(val, LazyExpr))
 
-            exception_status, return_val = self.__eval_lazy_expr(val)
+            exception_status, return_val = self.__eval_lazy_expr(self.__make_lazy_expr(val))
             # if val.value() is not None:
             #     return ExecStatus.CONTINUE, val.value()
             # if val.unknown_var() is not None:
@@ -350,7 +348,9 @@ class Interpreter(InterpreterBase):
         if expr_ast.elem_type == InterpreterBase.FCALL_NODE:
             exception_status, return_val = self.__call_func(expr_ast)
             # return val is LazyExpression
-            _, new_return_val = self.__eval_lazy_expr(self.__make_lazy_expr(return_val))
+            other_exception_status, new_return_val = self.__eval_lazy_expr(self.__make_lazy_expr(return_val))
+            if (other_exception_status == ExecStatus.EXCEPTION):
+                return other_exception_status, new_return_val
             return exception_status, new_return_val
         
 
@@ -364,7 +364,7 @@ class Interpreter(InterpreterBase):
             return self.__eval_unary(expr_ast, Type.BOOL, lambda x: not x)
 
     def __eval_op(self, arith_ast):
-        left_exception_status, left_value_obj = self.__eval_lazy_expr(arith_ast.get("op1"))
+        left_exception_status, left_value_obj = self.__eval_lazy_expr(self.__make_lazy_expr(arith_ast.get("op1")))
         # check the exception statsus
         if (left_exception_status == ExecStatus.EXCEPTION):
             return (ExecStatus.EXCEPTION, left_value_obj)
@@ -395,7 +395,7 @@ class Interpreter(InterpreterBase):
                 return ExecStatus.CONTINUE, Value(Type.BOOL, True)
 
         # if none of the short circuits worked, evaluate the right value object
-        right_exception_status, right_value_obj = self.__eval_lazy_expr(arith_ast.get("op2"))
+        right_exception_status, right_value_obj = self.__eval_lazy_expr(self.__make_lazy_expr(arith_ast.get("op2")))
 
         # check exception status
         if (right_exception_status == ExecStatus.EXCEPTION):
@@ -425,7 +425,7 @@ class Interpreter(InterpreterBase):
         return obj1.type() == obj2.type()
 
     def __eval_unary(self, arith_ast, t, f):
-        exception_status, value_obj = self.__eval_lazy_expr(arith_ast.get("op1"))
+        exception_status, value_obj = self.__eval_lazy_expr(self.__make_lazy_expr(arith_ast.get("op1")))
         if (exception_status == ExecStatus.EXCEPTION):
             return (ExecStatus.EXCEPTION, value_obj)
 
@@ -566,6 +566,9 @@ class Interpreter(InterpreterBase):
             return (ExecStatus.RETURN, Interpreter.NIL_VALUE)
         # exception_status, 
         returned_value = self.__make_lazy_expr(expr_ast)
+        # print(returned_value)
+        # if returned_value.value() is not None:
+        #     print(returned_value.value().value())
         # if (exception_status == ExecStatus.EXCEPTION):
             # return (ExecStatus.EXCEPTION, returned_value)
         value_obj = copy.copy(returned_value)
